@@ -7,7 +7,7 @@ that tunnel.
 
 ```
                  Floating IP "vpn"  ─┐
-internet ──────► Floating IPs "svc" ─┼─► active router ══ WireGuard ══► lab router ──► Cilium LoadBalancer IPs
+internet ──────► Floating IPs "svc" ─┼─► active router ══ WireGuard ══► lab router ──► services in the lab
                                      │   (VRRP master)      (dialled by the lab)        (announced by BGP)
                                      └─► standby router
 ```
@@ -39,13 +39,17 @@ internet ──────► Floating IPs "svc" ─┼─► active router ═
 | A WireGuard key pair for the Hetzner side, and the lab router's public key | `secret.example.yaml` |
 | A DNS name that follows the lab's public address | `network.yaml` |
 
-On the lab router (OPNsense): a WireGuard peer pointing at the VPN Floating IP
-with a keepalive, an eBGP session to `10.99.0.1` announcing the service
-addresses, and policy routing so that replies *from* those addresses leave
-through the tunnel rather than through the lab's own uplink. Cilium's sessions
-with the lab router are a separate matter: routes learned over iBGP are not
-passed on to another iBGP peer, which is why the session to Hetzner is eBGP
-with AS numbers of its own.
+On the lab router: a WireGuard peer pointing at the VPN Floating IP with a
+keepalive, an eBGP session to `10.99.0.1` announcing the service addresses, and
+policy routing so that replies *from* those addresses leave through the tunnel
+rather than through the lab's own uplink. If the lab router itself learns
+those addresses over iBGP, for instance from a Kubernetes cluster, note that
+routes learned over iBGP are not passed on to another iBGP peer, which is why
+the session to Hetzner is eBGP with AS numbers of its own.
+
+Every address, name and AS number in these files is a made-up placeholder,
+from the documentation, private-address and private-AS ranges. Replace all of
+them.
 
 ## Status of this example
 

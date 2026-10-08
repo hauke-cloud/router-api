@@ -29,4 +29,4 @@ spec:
         port: any
   # For debugging on the host. The operator itself never uses SSH.
   sshKeys:
-    - yubikey
+    - admin
