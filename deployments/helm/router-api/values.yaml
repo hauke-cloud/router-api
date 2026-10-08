@@ -1,0 +1,101 @@
+# One image carries the three managers.
+image:
+  repository: ghcr.io/hauke-cloud/router-api
+  pullPolicy: IfNotPresent
+  # Defaults to the chart's appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Restrict every manager to one namespace. Empty watches all namespaces.
+watchNamespace: ""
+
+# Each manager applies the CustomResourceDefinitions of its API group when it
+# starts, so that the schema in the cluster is always the one the running
+# binary understands. Turn this off to install them out of band; the managers
+# then need no permission on CustomResourceDefinitions.
+crds:
+  install: true
+
+logLevel: info
+logFormat: json
+
+# The managers. Each is a Deployment of its own with its own ServiceAccount
+# and only the permissions it needs. A provider can be left out, or replaced
+# by one for another cloud or another router OS.
+managers:
+  # Router, RouterMachine, RouterSet, RouterDeployment, RouterHealthCheck.
+  core:
+    enabled: true
+    replicas: 1
+    leaderElection: true
+    extraArgs: []
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        memory: 256Mi
+  # HetznerMachine, HetznerMachineTemplate, HetznerRouterNetwork.
+  infrastructure-hetzner:
+    enabled: true
+    replicas: 1
+    leaderElection: true
+    extraArgs: []
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        memory: 256Mi
+  # VyOSConfig, VyOSConfigTemplate. This is the manager that connects to the
+  # routers; whatever restricts their management port has to let it through.
+  config-vyos:
+    enabled: true
+    replicas: 1
+    leaderElection: true
+    extraArgs: []
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        memory: 256Mi
+
+serviceAccount:
+  create: true
+  annotations: {}
+
+rbac:
+  create: true
+
+metrics:
+  port: 8080
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""

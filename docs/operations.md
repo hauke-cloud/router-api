@@ -1,0 +1,86 @@
+# Operating routers
+
+## Looking
+
+```sh
+kubectl get routerdeployments,routersets,routers          # short names: rd, rs, rt
+kubectl get vyosconfigs,hetznermachines                   # vc, hm
+kubectl get router-api                                    # everything, by category
+```
+
+`Router` is the object that answers "does it work". Its conditions:
+
+| Condition | True means | Comes from |
+| --- | --- | --- |
+| `Ready` | in service: `MachineReady`, configured at least once, `Healthy` | core |
+| `MachineReady` | the server exists and is running | infrastructure provider |
+| `BootstrapReady` | the data the server boots with has been published | config provider |
+| `ConfigApplied` | it runs the configuration its config object currently describes | config provider |
+| `Healthy` | the API answers and no VRRP group is in fault | config provider |
+| `Drained` | asked to hand over, and no longer VRRP master | config provider |
+
+The `VyOSConfig` of the same name has the detail: `APIReachable`, `VRRPMaster` (its reason is
+the VRRP state), the VyOS version, and when the configuration was last changed.
+
+## Changing
+
+| To | Do | Effect |
+| --- | --- | --- |
+| change the configuration | edit `commands` or `values` of the `VyOSConfigTemplate` | applied in place, one router at a time |
+| upgrade VyOS | change `image` | routers are replaced, one at a time |
+| resize or move | edit the `HetznerMachineTemplate` | routers are replaced, one at a time |
+| add or remove routers | `kubectl scale routerdeployment edge --replicas=3` | |
+| hold everything | `spec.paused: true` on the deployment | no rollouts; existing routers stay managed |
+| hands off one object | annotation `router.hauke.cloud/paused` | no controller acts on it |
+
+Watch a rollout with `kubectl get rd,rs,rt -w`. A deployment's `RollingOut` condition is true
+until every router is of the current revision, available, and runs the current configuration.
+
+A router that is being deleted no longer counts against `maxSurge`, as with Pods: its server
+can exist for a moment next to its replacement's.
+
+## When something is stuck
+
+**A rollout does not advance.** One router at a time, and only while the others are settled.
+Look for a `Router` that is not `Ready`, or whose `ConfigApplied` is not true; its message says
+why. A configuration one router refused is deliberately not handed to the next.
+
+**`ConfigApplied=False`.** See the table in [configuration.md](configuration.md). Fix the
+template; the retry is immediate when the rendered configuration changes.
+
+**`APIReachable=False`.** The operator cannot reach the router's management port. Check, in
+this order: the `HetznerRouterNetwork`'s `ManagementSourcesResolved` condition and
+`status.managementCIDRs` (does it list the address the operator comes from right now?), the
+server in the Hetzner console, and VyOS itself on the server:
+
+```sh
+ssh root@<server>                       # with a key from HetznerRouterNetwork.spec.sshKeys
+systemctl status vyos
+podman exec -it vyos su - vyos          # the VyOS CLI
+journalctl -u cloud-final               # the first boot
+```
+
+**A router was replaced and you want to know why.** `kubectl describe routerhealthcheck`. The
+sequence is: unready for longer than the timeout, a reboot (visible as the
+`router.hauke.cloud/remediation` annotation on the `RouterMachine`), and if it is still unready
+after `rebootTimeout`, deletion, upon which the `RouterSet` builds a new one.
+
+**Nothing is being remediated although routers are down.** `RemediationAllowed=False` on the
+health check: more than `maxUnhealthy` are unhealthy at once. That is the guard against an
+operator that has lost its own connectivity rebooting a healthy fleet. Routers keep failing
+over among themselves regardless.
+
+**A server disappeared.** The `HetznerMachine` reports `ServerNotFound` and does not create
+another: a new server from the old user data would come up as a router the operator believes it
+has already configured. The health check replaces the router.
+
+## Deleting
+
+Delete the `RouterDeployment`. Each router's server is deleted before the credentials that
+belong to it. The `HetznerRouterNetwork` can be deleted once no machine uses it; its firewall
+and placement group go with it. The Hetzner network and the Floating IPs were never the
+operator's and are left alone.
+
+A `HetznerMachine` is not let go of while its server cannot be deleted, for instance because the
+token Secret is gone. Restore the Secret rather than removing the finalizer, or the server keeps
+running, and being billed, with nothing in the cluster that knows about it.

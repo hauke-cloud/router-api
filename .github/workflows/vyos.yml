@@ -1,0 +1,31 @@
+---
+name: Real VyOS
+
+# Runs the config provider against a real VyOS container: the seed script, the
+# REST client and the apply logic. The container image comes from the vyos
+# repository; this job is how a new VyOS nightly is checked against the
+# operator before anything depends on it.
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "internal/config/**"
+      - "test/vyos/**"
+      - ".github/workflows/vyos.yml"
+  workflow_dispatch:
+    inputs:
+      image:
+        description: VyOS image to test against
+        required: false
+        default: ghcr.io/hauke-cloud/vyos:latest
+
+jobs:
+  test-vyos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+      - name: Run the config provider against VyOS
+        run: make test-vyos VYOS_IMAGE=${{ inputs.image || 'ghcr.io/hauke-cloud/vyos:latest' }}
