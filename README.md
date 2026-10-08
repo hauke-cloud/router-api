@@ -102,7 +102,7 @@ starts. The `config-vyos` manager is the one that connects to the routers.
 
 ```sh
 make check        # format, lint, generated code, chart, all tests
-make test         # unit, integration (envtest) and the system test
+make test         # unit, integration (envtest) and the system test; plain `go test ./...` refuses to skip these
 make test-vyos    # the config provider against a real VyOS container (needs podman and the image)
 make e2e          # everything against Hetzner Cloud (needs a token; creates servers)
 make help

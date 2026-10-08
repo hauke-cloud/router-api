@@ -46,11 +46,29 @@ func Scheme() *runtime.Scheme {
 	return scheme
 }
 
+// SkipVariable is the environment variable that, set to anything, lets the
+// integration tests be left out when the control plane binaries are missing.
+const SkipVariable = "ROUTER_API_SKIP_ENVTEST"
+
+// withoutAssets decides what a test binary does when KUBEBUILDER_ASSETS is
+// not set: fail and say how to run the tests, unless skipping was asked for.
+//
+// Go reports a package whose TestMain ran nothing as "ok". These packages are
+// most of the tests, so a quiet skip would turn `go test ./...` green with
+// half of it not run.
+func withoutAssets(getenv func(string) string) (code int, message string) {
+	if getenv(SkipVariable) != "" {
+		return 0, "KUBEBUILDER_ASSETS is not set and " + SkipVariable + " is: skipping the integration tests of this package"
+	}
+	return 1, "KUBEBUILDER_ASSETS is not set: these tests need kube-apiserver and etcd.\n" +
+		"Run `make test`, which fetches them, or set " + SkipVariable + "=1 to leave these tests out."
+}
+
 // Run starts the control plane, hands a client for it to use, runs the tests
 // of the package and returns their exit code. Call it from TestMain.
 //
-// Without KUBEBUILDER_ASSETS (set by `make test`) the tests are skipped
-// rather than failed, so that a plain `go test ./...` still works.
+// Without KUBEBUILDER_ASSETS (set by `make test`) it fails, see
+// withoutAssets.
 func Run(m *testing.M, use func(client.Client)) int {
 	return RunWithConfig(m, func(_ *rest.Config, c client.Client) { use(c) })
 }
@@ -59,8 +77,9 @@ func Run(m *testing.M, use func(client.Client)) int {
 // to tell them where the control plane is.
 func RunWithConfig(m *testing.M, use func(*rest.Config, client.Client)) int {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
-		fmt.Println("KUBEBUILDER_ASSETS is not set, skipping integration tests; run `make test`")
-		return 0
+		code, message := withoutAssets(os.Getenv)
+		fmt.Fprintln(os.Stderr, message)
+		return code
 	}
 
 	env := &envtest.Environment{}
