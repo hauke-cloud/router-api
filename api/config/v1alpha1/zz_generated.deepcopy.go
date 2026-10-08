@@ -245,6 +245,10 @@ func (in *VyOSConfigStatus) DeepCopyInto(out *VyOSConfigStatus) {
 		in, out := &in.LastAppliedTime, &out.LastAppliedTime
 		*out = (*in).DeepCopy()
 	}
+	if in.LastFailureTime != nil {
+		in, out := &in.LastFailureTime, &out.LastFailureTime
+		*out = (*in).DeepCopy()
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]metav1.Condition, len(*in))

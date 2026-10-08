@@ -24,10 +24,6 @@ import (
 )
 
 const (
-	// VyOSConfigFinalizer keeps a VyOSConfig until the Secrets it generated
-	// are gone.
-	VyOSConfigFinalizer = "config.router.hauke.cloud/vyosconfig"
-
 	// VRRPStateCondition is True while the router is VRRP master of at least
 	// one group; its reason is the state keepalived reports.
 	VRRPStateCondition = "VRRPMaster"
@@ -179,9 +175,22 @@ type VyOSConfigStatus struct {
 	// AppliedHash identifies the rendered configuration the router runs.
 	// +optional
 	AppliedHash string `json:"appliedHash,omitempty"`
+	// RunningHash identifies the configuration the router was running right
+	// after the last apply. VyOS rewrites some values when it stores them,
+	// so it differs from AppliedHash; a router whose configuration no longer
+	// hashes to it has been changed by someone else.
+	// +optional
+	RunningHash string `json:"runningHash,omitempty"`
 	// LastAppliedTime is when the configuration was last changed.
 	// +optional
 	LastAppliedTime *metav1.Time `json:"lastAppliedTime,omitempty"`
+	// FailedHash identifies a rendered configuration the router rejected.
+	// It is not tried again until it changes or some time has passed.
+	// +optional
+	FailedHash string `json:"failedHash,omitempty"`
+	// LastFailureTime is when FailedHash was last tried.
+	// +optional
+	LastFailureTime *metav1.Time `json:"lastFailureTime,omitempty"`
 	// Version is the VyOS version the router reports.
 	// +optional
 	Version string `json:"version,omitempty"`
