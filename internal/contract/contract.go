@@ -277,3 +277,12 @@ func asInt64(value any) int64 {
 	}
 	return 0
 }
+
+// NestedInt64 reads an integer field, whatever number type it was decoded as.
+func NestedInt64(object *unstructured.Unstructured, fields ...string) (value int64, found bool, err error) {
+	raw, found, err := unstructured.NestedFieldNoCopy(object.Object, fields...)
+	if err != nil || !found {
+		return 0, found, err
+	}
+	return asInt64(raw), true, nil
+}
