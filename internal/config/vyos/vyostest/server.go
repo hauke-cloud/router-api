@@ -19,7 +19,9 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -40,8 +42,9 @@ type Router struct {
 	URL string
 	// Key the API accepts.
 	Key string
-	// CertPEM is the certificate the API presents.
+	// CertPEM is the certificate the API presents, KeyPEM its key.
 	CertPEM []byte
+	KeyPEM  []byte
 
 	mu sync.Mutex
 	// running is the active configuration, saved what a reboot would load.
@@ -67,11 +70,12 @@ func New(t *testing.T, config string) *Router {
 	if err != nil {
 		t.Fatalf("vyostest: %v", err)
 	}
-	cert, certPEM := selfSigned(t)
+	cert, certPEM, keyPEM := selfSigned(t)
 
 	r := &Router{
 		Key:     "test-key",
 		CertPEM: certPEM,
+		KeyPEM:  keyPEM,
 		running: paths,
 		saved:   slices.Clone(paths),
 		version: "2026.10.07-0712-rolling",
@@ -155,6 +159,16 @@ func (r *Router) FailNext(endpoint string, n int) {
 		r.failNext = map[string]int{}
 	}
 	r.failNext[endpoint] = n
+}
+
+// Port returns the TCP port the API listens on.
+func (r *Router) Port() int32 {
+	parsed, err := url.Parse(r.URL)
+	if err != nil {
+		return 0
+	}
+	port, _ := strconv.ParseInt(parsed.Port(), 10, 32)
+	return int32(port)
 }
 
 // SetVRRP sets the output of "show vrrp".
@@ -336,7 +350,7 @@ func sortedLines(paths []command.Path) []string {
 	return lines
 }
 
-func selfSigned(t *testing.T) (cert tls.Certificate, certPEM []byte) {
+func selfSigned(t *testing.T) (cert tls.Certificate, certPEM, keyPEM []byte) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -357,6 +371,11 @@ func selfSigned(t *testing.T) (cert tls.Certificate, certPEM []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
 	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, certPEM
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, certPEM, keyPEM
 }
