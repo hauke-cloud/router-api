@@ -2,7 +2,7 @@
 
 # Build stage. Cross-compilation is done by Go rather than by emulation, so a
 # multi-arch build runs at native speed on a single builder.
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.27-alpine AS builder
 
 WORKDIR /src
 

@@ -21,6 +21,12 @@ spec:
         # A private address that follows the active router (a Hetzner alias IP).
         - name: privateVIP
           value: 10.0.1.100
+        # The Hetzner Cloud Network the routers are attached to, and its
+        # gateway, which is always the first address of the network's range.
+        - name: privateNetwork
+          value: 10.0.0.0/16
+        - name: privateGateway
+          value: 10.0.0.1
         # The lab's public addresses, routed through the tunnel.
         - name: servicePrefix
           value: 203.0.113.16/29
@@ -64,6 +70,14 @@ spec:
         set system host-name {{ .Router.Name }}
         set system time-zone Europe/Berlin
         set system name-server 1.1.1.1
+
+        # --- the private network ---------------------------------------------
+        # A server's private address is a /32 and everything else in the
+        # network is reached through the gateway. VyOS's DHCP client takes the
+        # address but not the routes that come with it, and without them the
+        # routers cannot see each other: each would elect itself master.
+        set protocols static route {{ .Values.privateGateway }}/32 interface {{ .Host.PrivateInterface }}
+        set protocols static route {{ .Values.privateNetwork }} next-hop {{ .Values.privateGateway }}
 
         # --- high availability ---------------------------------------------
         # Unicast, over the private network: Hetzner carries no multicast.

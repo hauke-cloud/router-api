@@ -9,11 +9,11 @@ The first and so far only implementation runs [VyOS](https://vyos.io) on
 [Hetzner Cloud](https://www.hetzner.com/cloud). Both halves are providers behind a contract,
 so another cloud or another router OS is a new provider, not a change to the core.
 
-> **Status: not yet run against Hetzner.** Everything is covered by tests against a real
-> Kubernetes API server, the VyOS side also against a real VyOS container. What has not
-> happened yet is a real server booting from the generated user data.
+> **Status: early.** The controllers are tested against a real Kubernetes API server, the VyOS
+> side against a real VyOS, and routers have been bootstrapped, configured and failed over on
+> Hetzner Cloud. No lab has been connected through one yet.
 > [docs/spike-vyos-container.md](docs/spike-vyos-container.md) lists exactly what is
-> established and what is not.
+> established, how, and what is not.
 
 ## The objects
 
