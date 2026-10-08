@@ -3,6 +3,7 @@ module github.com/hauke-cloud/router-api
 go 1.27.1
 
 require (
+	github.com/hetznercloud/hcloud-go/v2 v2.52.0
 	github.com/prometheus/client_golang v1.24.1
 	k8s.io/api v0.37.1
 	k8s.io/apiextensions-apiserver v0.37.1
@@ -47,7 +48,6 @@ require (
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
-	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
