@@ -46,6 +46,12 @@ linters:
           - gosec
           - goconst
           - unparam
+      # VyOS configuration paths are written out token by token so that
+      # they read like the commands they are. Constants for "https" and
+      # "address" would only hide that.
+      - path: internal/config/vyos/bootstrap/bootstrap\.go
+        linters:
+          - goconst
       # Generated deepcopy code is controller-gen's, not ours.
       - path: zz_generated\.deepcopy\.go
         linters:

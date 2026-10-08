@@ -378,6 +378,11 @@ spec:
                   DataSecretName is the Secret holding the instance's user data under
                   the key "value".
                 type: string
+              failedHash:
+                description: |-
+                  FailedHash identifies a rendered configuration the router rejected.
+                  It is not tried again until it changes or some time has passed.
+                type: string
               initialization:
                 description: Initialization of the bootstrap data.
                 minProperties: 1
@@ -391,11 +396,22 @@ spec:
                 description: LastAppliedTime is when the configuration was last changed.
                 format: date-time
                 type: string
+              lastFailureTime:
+                description: LastFailureTime is when FailedHash was last tried.
+                format: date-time
+                type: string
               observedGeneration:
                 description: ObservedGeneration is the generation this status was
                   computed from.
                 format: int64
                 type: integer
+              runningHash:
+                description: |-
+                  RunningHash identifies the configuration the router was running right
+                  after the last apply. VyOS rewrites some values when it stores them,
+                  so it differs from AppliedHash; a router whose configuration no longer
+                  hashes to it has been changed by someone else.
+                type: string
               version:
                 description: Version is the VyOS version the router reports.
                 type: string

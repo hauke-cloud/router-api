@@ -38,6 +38,23 @@ func (p Path) HasPrefix(prefix Path) bool {
 	return len(p) >= len(prefix) && slices.Equal(p[:len(prefix)], prefix)
 }
 
+// Wildcard in a pattern stands for any one token.
+const Wildcard = "*"
+
+// MatchesPrefix is HasPrefix with a pattern: a Wildcard token in pattern
+// matches whatever p has in that place.
+func (p Path) MatchesPrefix(pattern Path) bool {
+	if len(p) < len(pattern) {
+		return false
+	}
+	for i, token := range pattern {
+		if token != Wildcard && token != p[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // quote wraps a token in single quotes unless it is safe to write bare.
 func quote(token string) string {
 	if token != "" && !strings.ContainsFunc(token, needsQuoting) {
