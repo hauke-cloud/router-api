@@ -1,0 +1,62 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - gocritic
+    - goconst
+    - gosec
+    - misspell
+    - nilerr
+    - noctx
+    - perfsprint
+    - prealloc
+    - revive
+    - unconvert
+    - unparam
+    - usestdlibvars
+    - wastedassign
+    - whitespace
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: false
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+    gosec:
+      excludes:
+        # G104 duplicates errcheck, which is on by default.
+        - G104
+  exclusions:
+    rules:
+      # Test files may hard-code credentials-shaped strings and skip error
+      # checks on fixtures.
+      - path: _test\.go
+        linters:
+          - gosec
+          - goconst
+          - unparam
+      # Generated deepcopy code is controller-gen's, not ours.
+      - path: zz_generated\.deepcopy\.go
+        linters:
+          - gocritic
+          - revive
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/hauke-cloud/router-api

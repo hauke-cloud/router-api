@@ -1,0 +1,140 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: hetznermachinetemplates.infrastructure.router.hauke.cloud
+spec:
+  group: infrastructure.router.hauke.cloud
+  names:
+    categories:
+    - router-api
+    kind: HetznerMachineTemplate
+    listKind: HetznerMachineTemplateList
+    plural: hetznermachinetemplates
+    shortNames:
+    - hmt
+    singular: hetznermachinetemplate
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.template.spec.serverType
+      name: Type
+      type: string
+    - jsonPath: .spec.template.spec.location
+      name: Location
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          HetznerMachineTemplate is the mould HetznerMachines are created from. Any
+          change to it replaces the routers built from it.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: HetznerMachineTemplateSpec wraps the machine to stamp out.
+            properties:
+              template:
+                description: Template of the machines.
+                properties:
+                  metadata:
+                    description: Metadata copied to every HetznerMachine.
+                    properties:
+                      annotations:
+                        additionalProperties:
+                          type: string
+                        description: Annotations added to the created object.
+                        type: object
+                      labels:
+                        additionalProperties:
+                          type: string
+                        description: Labels added to the created object.
+                        type: object
+                    type: object
+                  spec:
+                    description: Spec of the machines.
+                    properties:
+                      enableIPv4:
+                        default: true
+                        description: EnableIPv4 gives the server a public IPv4 address.
+                        type: boolean
+                      enableIPv6:
+                        default: true
+                        description: EnableIPv6 gives the server a public IPv6 network.
+                        type: boolean
+                      image:
+                        default: ubuntu-24.04
+                        description: |-
+                          Image the server is created from: the name of a system image or the ID
+                          of a snapshot.
+                        maxLength: 63
+                        minLength: 1
+                        type: string
+                      location:
+                        description: Location, for example fsn1.
+                        maxLength: 63
+                        minLength: 1
+                        type: string
+                      networkRef:
+                        description: NetworkRef names the HetznerRouterNetwork the
+                          server belongs to.
+                        properties:
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      providerID:
+                        description: ProviderID is hcloud://<server id>, set once
+                          the server exists.
+                        maxLength: 512
+                        type: string
+                      serverType:
+                        description: ServerType, for example cx23.
+                        maxLength: 63
+                        minLength: 1
+                        type: string
+                    required:
+                    - location
+                    - networkRef
+                    - serverType
+                    type: object
+                required:
+                - spec
+                type: object
+            required:
+            - template
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}
