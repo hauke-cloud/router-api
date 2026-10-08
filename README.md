@@ -104,8 +104,12 @@ starts. The `config-vyos` manager is the one that connects to the routers.
 make check        # format, lint, generated code, chart, all tests
 make test         # unit, integration (envtest) and the system test
 make test-vyos    # the config provider against a real VyOS container (needs podman and the image)
+make e2e          # everything against Hetzner Cloud (needs a token; creates servers)
 make help
 ```
+
+`make e2e` runs the managers against Hetzner Cloud itself and creates billed servers;
+[test/e2e](test/e2e/e2e_test.go) says what it needs.
 
 `make test` runs every controller against a real kube-apiserver. `test/system` runs all three
 managers together through the life of a router group, with a fake Hetzner whose servers are fake

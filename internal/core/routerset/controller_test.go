@@ -162,29 +162,34 @@ func (f *fixture) setReady(name string, ready bool, since time.Time) {
 		Type: corev1alpha1.ReadyCondition, Status: status, Reason: "Test",
 		ObservedGeneration: router.Generation, LastTransitionTime: metav1.NewTime(since),
 	})
-	if ready && conditions.Get(router.Status.Conditions, corev1alpha1.ConfigAppliedCondition) == nil {
-		// A router does not become ready without having been configured.
+	// The Router's own copy of ConfigApplied stays True whatever happens to
+	// the config object: it is only brought up to date when the Router is
+	// reconciled, and the set must not go by it.
+	if ready {
 		conditions.True(&router.Status.Conditions, router.Generation, corev1alpha1.ConfigAppliedCondition, "Test", "")
 	}
 	if err := k8s.Status().Update(f.ctx, router); err != nil {
 		f.t.Fatal(err)
 	}
+	if ready {
+		// A router does not become ready without having been configured.
+		if config := f.config(name); conditions.Get(config.Status.Conditions, corev1alpha1.ConfigAppliedCondition) == nil {
+			f.setApplied(name, true)
+		}
+	}
 }
 
-// setApplied plays the Router controller reporting whether the router runs
-// the configuration its config object describes.
+// setApplied plays the config provider reporting, for the config object as
+// it is now, whether the router runs it.
 func (f *fixture) setApplied(name string, applied bool) {
 	f.t.Helper()
-	router := &corev1alpha1.Router{}
-	if err := k8s.Get(f.ctx, types.NamespacedName{Namespace: f.namespace, Name: name}, router); err != nil {
-		f.t.Fatal(err)
-	}
+	config := f.config(name)
 	status := metav1.ConditionFalse
 	if applied {
 		status = metav1.ConditionTrue
 	}
-	conditions.Set(&router.Status.Conditions, router.Generation, corev1alpha1.ConfigAppliedCondition, status, "Test", "")
-	if err := k8s.Status().Update(f.ctx, router); err != nil {
+	conditions.Set(&config.Status.Conditions, config.Generation, corev1alpha1.ConfigAppliedCondition, status, "Test", "")
+	if err := k8s.Status().Update(f.ctx, config); err != nil {
 		f.t.Fatal(err)
 	}
 }
@@ -454,10 +459,22 @@ func TestConfigChangeGoesToOneRouterAtATime(t *testing.T) {
 		t.Fatalf("%d configs updated, want exactly 1", len(first))
 	}
 
-	// The router has the new configuration and is applying it. It still
-	// forwards traffic on the old one, so it stays ready. But until it runs
-	// the new one, the other router must not be touched: if the change is
-	// bad, one router has to be left that has not seen it.
+	// The router has the new configuration and has not applied it: the
+	// config provider's verdict is still the one on the configuration from
+	// before, and the Router still mirrors that as True. This is exactly
+	// what the set sees for the first seconds after handing out a change
+	// (found on Hetzner, where both routers got a change within seconds of
+	// each other). The other router must not be touched.
+	f.reconcile()
+	f.reconcile()
+	if got := f.updated(changed); len(got) != 1 {
+		t.Fatalf("updated %v right after handing the change to %s, before anything says it was applied", got, first[0])
+	}
+
+	// The provider is at it. The router still forwards traffic on the old
+	// configuration, so it stays ready. But until it runs the new one the
+	// other router stays as it is: if the change is bad, one router has to
+	// be left that has not seen it.
 	f.setApplied(first[0], false)
 	f.reconcile()
 	f.reconcile()

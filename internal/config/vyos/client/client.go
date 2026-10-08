@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -22,6 +23,9 @@ import (
 // commit-confirm: the change the caller meant to keep has already been
 // reverted, or was never made.
 var ErrNothingToConfirm = errors.New("no commit-confirm is pending on the router")
+
+// connectTimeout bounds how long establishing a connection may take.
+const connectTimeout = 5 * time.Second
 
 // maxResponseBytes bounds what is read from a router. A full configuration
 // with certificates in it is tens of kilobytes.
@@ -102,6 +106,10 @@ func New(opts *Options) (*Client, error) {
 		http: &http.Client{
 			Timeout: timeout,
 			Transport: &http.Transport{
+				// A server that is still booting, or gone, does not refuse a
+				// connection, it ignores it. Without this an attempt hangs for
+				// the whole request timeout, which is sized for a long commit.
+				DialContext: (&net.Dialer{Timeout: connectTimeout}).DialContext,
 				TLSClientConfig: &tls.Config{
 					RootCAs:    pool,
 					ServerName: opts.ServerName,

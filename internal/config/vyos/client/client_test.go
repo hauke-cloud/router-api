@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hauke-cloud/router-api/internal/config/vyos/command"
 	"github.com/hauke-cloud/router-api/internal/config/vyos/vyostest"
@@ -176,5 +177,25 @@ func TestShowStripsNoise(t *testing.T) {
 	}
 	if !strings.HasPrefix(out, "Name") {
 		t.Errorf("output = %q", out)
+	}
+}
+
+func TestAnUnresponsiveAddressFailsQuickly(t *testing.T) {
+	router := vyostest.New(t, "")
+	// 192.0.2.0/24 is reserved for documentation: nothing answers, nothing
+	// refuses. This is what a server that is still booting looks like.
+	c, err := New(&Options{URL: "https://192.0.2.1", Key: "k", CACertPEM: router.CertPEM, ServerName: vyostest.ServerName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	if _, err := c.Info(context.Background()); err == nil {
+		t.Fatal("Info succeeded against an address nothing listens on")
+	}
+	// Found on Hetzner: the first attempt at a booting server hung for the
+	// two minutes a commit is allowed to take, and delayed the router by
+	// as much.
+	if elapsed := time.Since(started); elapsed > 15*time.Second {
+		t.Errorf("gave up after %s", elapsed.Round(time.Second))
 	}
 }
