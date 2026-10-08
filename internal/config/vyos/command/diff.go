@@ -27,7 +27,8 @@ func (c Change) String() string {
 // new one a set of the same node.
 //
 // Nothing below a path in keep is deleted. That is for configuration the
-// router has to retain although nobody listed it.
+// router has to retain although nobody listed it. A keep path may contain
+// Wildcard tokens.
 func Diff(current, desired, keep []Path) []Change {
 	// Every ancestor of a desired command, itself included: a node on this
 	// list still has something below it that is wanted.
@@ -38,10 +39,22 @@ func Diff(current, desired, keep []Path) []Change {
 		}
 	}
 
+	// What is kept counts as wanted too, ancestors included. Otherwise a
+	// delete of a stale sibling, placed at the highest node nothing desired
+	// lives under, would take the kept path with it.
+	for _, path := range current {
+		if !kept(path, keep) {
+			continue
+		}
+		for depth := 1; depth <= len(path); depth++ {
+			wanted[path[:depth].key()] = struct{}{}
+		}
+	}
+
 	var changes []Change
 	deleted := map[string]struct{}{}
 	for _, path := range current {
-		if _, ok := wanted[path.key()]; ok || kept(path, keep) {
+		if _, ok := wanted[path.key()]; ok {
 			continue
 		}
 		// Delete at the highest node nothing wanted lives under. Removing
@@ -74,7 +87,7 @@ func Diff(current, desired, keep []Path) []Change {
 
 func kept(path Path, keep []Path) bool {
 	for _, prefix := range keep {
-		if path.HasPrefix(prefix) {
+		if path.MatchesPrefix(prefix) {
 			return true
 		}
 	}
