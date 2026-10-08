@@ -28,6 +28,7 @@ All calls made with the certificate pinned (`curl --cacert`), not `-k`.
 | `/retrieve` `exists`, `returnValues`, `showConfig` | As documented; `showConfig` returns JSON. |
 | `/configure` with a list of ops | One commit. An invalid value fails the whole request with 400 before anything is applied. |
 | `/configure`, ops spanning components, one component failing | 400, but the components that succeeded **stay committed**. A failed apply is not a no-op. |
+| `/configure` with `confirm_time`, one component failing | 400, the revert timer is **not armed** (`commit-confirm.timer` inactive, `confirm` answers `No confirm pending`) and the components that succeeded stay committed. Commit-confirm does not clean up a failed commit; the caller has to put the previous configuration back. |
 | `/configure` delete of a missing path | 200 (strict mode is off by default). |
 | `/configure` JSON body `{"key","confirm_time":N,"commands":[...]}` | Applies and arms a revert timer. `N` is in **minutes**, minimum 1. |
 | `/config-file` `{"op":"confirm"}` | `Reboot timer stopped` / `Reload timer stopped`. With nothing pending: 200 `No confirm pending`. |
