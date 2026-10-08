@@ -92,6 +92,9 @@ type ManagementSpec struct {
 	// ranges, in addition to whatever firewall the infrastructure has. Leave
 	// it empty when the operator's address changes.
 	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=43
+	// +kubebuilder:validation:items:Pattern=`^[0-9A-Fa-f:.]+(/[0-9]{1,3})?$`
 	// +optional
 	AllowedSources []string `json:"allowedSources,omitempty"`
 	// ConfirmTimeoutMinutes is how long the router waits for the operator to
@@ -126,8 +129,11 @@ type HostSpec struct {
 // applied to the running router.
 type VyOSConfigSpec struct {
 	// Image is the VyOS container image, by digest for a reproducible router.
+	// It is written into a systemd unit file on the host, so it is held to
+	// the characters an image reference is made of.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=512
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9][A-Za-z0-9._/:@-]*$`
 	Image string `json:"image"`
 	// Commands is the router's configuration as VyOS "set" commands, one per
 	// line; empty lines and lines starting with # are ignored. It is a Go

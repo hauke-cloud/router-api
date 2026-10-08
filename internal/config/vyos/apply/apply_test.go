@@ -168,3 +168,45 @@ func TestPlan(t *testing.T) {
 		t.Error("hash is not the hash of the running configuration")
 	}
 }
+
+func TestSettleConfirmsAndSavesWhatAnEarlierAttemptLeftOpen(t *testing.T) {
+	router, c := setup(t, before)
+	router.FailNext("/config-file", 1)
+	if _, err := Apply(context.Background(), c, parse(t, after), keep, 2); !errors.Is(err, ErrUnconfirmed) {
+		t.Fatalf("err = %v, want ErrUnconfirmed", err)
+	}
+	saved := router.Saved()
+
+	// The router runs the new configuration, with the revert timer armed and
+	// nothing saved. The connection is back.
+	if err := Settle(context.Background(), c); err != nil {
+		t.Fatalf("Settle: %v", err)
+	}
+
+	if router.ConfirmPending() {
+		t.Error("the revert timer is still running: the router will undo a configuration that is reported as applied")
+	}
+	if slices.Equal(router.Saved(), saved) || !slices.Equal(router.Saved(), router.Running()) {
+		t.Errorf("saved = %q, running = %q: a reboot would bring the old configuration back", router.Saved(), router.Running())
+	}
+}
+
+func TestSettleWithNothingPending(t *testing.T) {
+	router, c := setup(t, before)
+	// Nothing to confirm is not an error here: the point is that nothing is
+	// left open, and nothing is.
+	if err := Settle(context.Background(), c); err != nil {
+		t.Fatalf("Settle: %v", err)
+	}
+	if !slices.Equal(router.Saved(), router.Running()) {
+		t.Error("not saved")
+	}
+}
+
+func TestSettleReportsAFailedConfirm(t *testing.T) {
+	router, c := setup(t, before)
+	router.FailNext("/config-file", 1)
+	if err := Settle(context.Background(), c); !errors.Is(err, ErrUnconfirmed) {
+		t.Errorf("err = %v, want ErrUnconfirmed", err)
+	}
+}

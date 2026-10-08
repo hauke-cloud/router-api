@@ -363,6 +363,52 @@ func TestARejectedConfigurationIsNotHammered(t *testing.T) {
 	}
 }
 
+func TestAFailedConfirmIsNotReportedAsApplied(t *testing.T) {
+	f := newFixture(t)
+	f.boot()
+	f.reconcile()
+
+	// The change commits, and then the confirmation does not get through.
+	f.router.FailNext("/config-file", 1)
+	f.updateConfig(func(config *configv1alpha1.VyOSConfig) {
+		config.Spec.Commands = userCommands + "set system name-server 1.1.1.1\n"
+	})
+	f.reconcile()
+	if got := f.condition(corev1alpha1.ConfigAppliedCondition); got != "False/"+ReasonUnconfirmed {
+		t.Fatalf("ConfigApplied = %s", got)
+	}
+	if !f.router.ConfirmPending() {
+		t.Fatal("test setup: no commit-confirm is pending")
+	}
+
+	// The router still runs the new configuration, so there is nothing to
+	// change. But its revert timer is running and nothing was saved: saying
+	// "applied" now would be saying it about a configuration the router is
+	// about to undo.
+	f.router.FailNext("/config-file", 1)
+	f.reconcile()
+	if got := f.condition(corev1alpha1.ConfigAppliedCondition); got == "True/"+ReasonApplied {
+		t.Fatal("ConfigApplied is True while the commit is unconfirmed and the confirmation still fails")
+	}
+
+	// The connection is back. The pending commit is confirmed and saved,
+	// instead of being left to revert and applied all over again.
+	configures := f.router.Configures()
+	f.reconcile()
+	if got := f.condition(corev1alpha1.ConfigAppliedCondition); got != "True/"+ReasonApplied {
+		t.Errorf("ConfigApplied = %s", got)
+	}
+	if f.router.ConfirmPending() {
+		t.Error("the revert timer is still running")
+	}
+	if !slices.Equal(f.router.Running(), f.router.Saved()) {
+		t.Error("the configuration is reported as applied and was never saved")
+	}
+	if f.router.Configures() != configures {
+		t.Error("the configuration was committed again instead of the pending commit being confirmed")
+	}
+}
+
 func TestAChangedConfigurationIsTriedAtOnce(t *testing.T) {
 	f := newFixture(t)
 	f.boot()
@@ -609,5 +655,48 @@ func TestTemplateReplacementHash(t *testing.T) {
 	}
 	if got := hash(); got == second {
 		t.Error("the hash did not change with the files")
+	}
+}
+
+func TestTheAPIRejectsWhatMustNotReachARouter(t *testing.T) {
+	namespace := testenv.Namespace(t, k8s)
+	tests := map[string]func(*configv1alpha1.VyOSConfigSpec){
+		// The image name is written into a systemd unit file on the host. A
+		// line break in it would be a line of the unit file.
+		"image with a line break": func(spec *configv1alpha1.VyOSConfigSpec) {
+			spec.Image = "ghcr.io/hauke-cloud/vyos:1\nPodmanArgs=--volume=/:/host"
+		},
+		"image with a space": func(spec *configv1alpha1.VyOSConfigSpec) { spec.Image = "ghcr.io/hauke-cloud/vyos:1 --privileged" },
+		"allowed source that is no address": func(spec *configv1alpha1.VyOSConfigSpec) {
+			spec.Management.AllowedSources = []string{"the-lab"}
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			config := &configv1alpha1.VyOSConfig{
+				ObjectMeta: metav1.ObjectMeta{GenerateName: "rejected-", Namespace: namespace},
+				Spec:       configv1alpha1.VyOSConfigSpec{Image: "ghcr.io/hauke-cloud/vyos:1"},
+			}
+			mutate(&config.Spec)
+			if err := k8s.Create(context.Background(), config); err == nil {
+				t.Error("the API server accepted it")
+			}
+		})
+	}
+
+	for name, spec := range map[string]configv1alpha1.VyOSConfigSpec{
+		"tag":    {Image: "ghcr.io/hauke-cloud/vyos:2026.10.07-0712-rolling"},
+		"digest": {Image: "ghcr.io/hauke-cloud/vyos@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+		"port":   {Image: "registry.lab.example:5000/vyos:dev"},
+		"sources": {Image: "localhost/vyos:dev", Management: configv1alpha1.ManagementSpec{
+			AllowedSources: []string{"192.0.2.0/24", "198.51.100.7", "2001:db8::/32"},
+		}},
+	} {
+		t.Run("accepts "+name, func(t *testing.T) {
+			config := &configv1alpha1.VyOSConfig{ObjectMeta: metav1.ObjectMeta{GenerateName: "accepted-", Namespace: namespace}, Spec: spec}
+			if err := k8s.Create(context.Background(), config); err != nil {
+				t.Errorf("rejected: %v", err)
+			}
+		})
 	}
 }

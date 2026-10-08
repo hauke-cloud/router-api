@@ -184,10 +184,13 @@ spec:
                             type: string
                         type: object
                       image:
-                        description: Image is the VyOS container image, by digest
-                          for a reproducible router.
+                        description: |-
+                          Image is the VyOS container image, by digest for a reproducible router.
+                          It is written into a systemd unit file on the host, so it is held to
+                          the characters an image reference is made of.
                         maxLength: 512
                         minLength: 1
+                        pattern: ^[A-Za-z0-9][A-Za-z0-9._/:@-]*$
                         type: string
                       management:
                         description: Management connection to the router.
@@ -209,7 +212,10 @@ spec:
                               ranges, in addition to whatever firewall the infrastructure has. Leave
                               it empty when the operator's address changes.
                             items:
+                              maxLength: 43
+                              pattern: ^[0-9A-Fa-f:.]+(/[0-9]{1,3})?$
                               type: string
+                            maxItems: 64
                             type: array
                             x-kubernetes-list-type: set
                           confirmTimeoutMinutes:
