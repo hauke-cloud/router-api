@@ -21,6 +21,7 @@ import (
 	corev1alpha1 "github.com/hauke-cloud/router-api/api/core/v1alpha1"
 	"github.com/hauke-cloud/router-api/internal/conditions"
 	"github.com/hauke-cloud/router-api/internal/contract"
+	"github.com/hauke-cloud/router-api/internal/pace"
 )
 
 // Condition reasons set by this controller.
@@ -97,7 +98,7 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *corev1alpha1.R
 	err := r.Get(ctx, types.NamespacedName{Namespace: router.Namespace, Name: router.Spec.MachineRef.Name}, machine)
 	if apierrors.IsNotFound(err) {
 		r.notFound(router, ReasonMachineNotFound, fmt.Sprintf("RouterMachine %s does not exist", router.Spec.MachineRef.Name))
-		return reconcile.Result{RequeueAfter: waitInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(waitInterval)}, nil
 	} else if err != nil {
 		return reconcile.Result{}, err
 	}
@@ -105,7 +106,7 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *corev1alpha1.R
 	config, err := contract.Get(ctx, r.Client, router.Namespace, router.Spec.ConfigRef)
 	if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
 		r.notFound(router, ReasonConfigNotFound, fmt.Sprintf("%s %s does not exist", router.Spec.ConfigRef.Kind, router.Spec.ConfigRef.Name))
-		return reconcile.Result{RequeueAfter: waitInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(waitInterval)}, nil
 	} else if err != nil {
 		return reconcile.Result{}, err
 	}
@@ -131,22 +132,25 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *corev1alpha1.R
 		conditions.Get(machine.Status.Conditions, corev1alpha1.ReadyCondition),
 		ReasonWaitingForMachine, "the machine has not reported yet")
 
-	// Config. A verdict about an older generation of the config object is
-	// about a configuration that is no longer the wanted one.
+	// Config. "Applied" is about one particular configuration, so a verdict
+	// reached for an older generation of the config object does not count.
+	// Health and drain state are about the router itself and are taken as
+	// they are: a router does not stop being healthy because its
+	// configuration was edited.
 	status.Version = contract.Version(config)
-	for _, conditionType := range []string{corev1alpha1.ConfigAppliedCondition, corev1alpha1.HealthyCondition} {
-		conditions.Mirror(&status.Conditions, generation, conditionType, current(config, conditionType),
-			ReasonWaitingForProvider, "the config provider has not reported yet")
-	}
+	conditions.Mirror(&status.Conditions, generation, corev1alpha1.ConfigAppliedCondition, current(config, corev1alpha1.ConfigAppliedCondition),
+		ReasonWaitingForProvider, "the config provider has not reported yet")
+	conditions.Mirror(&status.Conditions, generation, corev1alpha1.HealthyCondition, contract.Condition(config, corev1alpha1.HealthyCondition),
+		ReasonWaitingForProvider, "the config provider has not reported yet")
 	if _, draining := router.Annotations[corev1alpha1.DrainAnnotation]; draining {
-		conditions.Mirror(&status.Conditions, generation, corev1alpha1.DrainedCondition, current(config, corev1alpha1.DrainedCondition),
+		conditions.Mirror(&status.Conditions, generation, corev1alpha1.DrainedCondition, contract.Condition(config, corev1alpha1.DrainedCondition),
 			ReasonWaitingForProvider, "the config provider has not reported yet")
 	} else {
 		conditions.False(&status.Conditions, generation, corev1alpha1.DrainedCondition, ReasonNotDraining, "")
 	}
 
 	summarize(router)
-	return reconcile.Result{RequeueAfter: waitInterval}, nil
+	return reconcile.Result{RequeueAfter: pace.Every(waitInterval)}, nil
 }
 
 // current returns a condition of a provider object unless it was reached for
@@ -174,8 +178,12 @@ func summarize(router *corev1alpha1.Router) {
 		status.Phase == corev1alpha1.RouterPhaseDraining
 
 	machineReady := conditions.IsTrue(status.Conditions, corev1alpha1.MachineReadyCondition)
-	applied := conditions.IsTrue(status.Conditions, corev1alpha1.ConfigAppliedCondition)
 	healthy := conditions.IsTrue(status.Conditions, corev1alpha1.HealthyCondition)
+	// Sticky. A router that has run one configuration of ours keeps running
+	// it while a newer one is outstanding or was refused, so being behind
+	// does not take it out of service.
+	status.Configured = status.Configured || conditions.IsTrue(status.Conditions, corev1alpha1.ConfigAppliedCondition)
+	applied := status.Configured
 
 	switch {
 	case !machineReady:
@@ -321,7 +329,7 @@ func (r *Reconciler) waitForDeletion(ctx context.Context, router *corev1alpha1.R
 	if err := r.patchStatus(ctx, router, original); err != nil {
 		return reconcile.Result{}, err
 	}
-	return reconcile.Result{RequeueAfter: waitInterval / 3}, nil
+	return reconcile.Result{RequeueAfter: pace.Every(waitInterval / 3)}, nil
 }
 
 func (r *Reconciler) patchStatus(ctx context.Context, router, original *corev1alpha1.Router) error {

@@ -265,8 +265,31 @@ func TestStaleConfigVerdictDoesNotCount(t *testing.T) {
 	if conditions.IsTrue(router.Status.Conditions, corev1alpha1.ConfigAppliedCondition) {
 		t.Error("ConfigApplied is True for a configuration nobody applied yet")
 	}
-	if conditions.IsTrue(router.Status.Conditions, corev1alpha1.ReadyCondition) {
-		t.Error("Ready is True while a configuration change is outstanding")
+	// The router still runs the configuration it had and forwards traffic.
+	// Calling it not ready would make every configuration change look like
+	// an outage of one router.
+	if !conditions.IsTrue(router.Status.Conditions, corev1alpha1.ReadyCondition) || router.Status.Phase != corev1alpha1.RouterPhaseReady {
+		t.Errorf("Ready = %+v, phase = %s while a configuration change is outstanding",
+			conditions.Get(router.Status.Conditions, corev1alpha1.ReadyCondition), router.Status.Phase)
+	}
+}
+
+func TestARejectedConfigurationDoesNotTakeTheRouterOutOfService(t *testing.T) {
+	f := newFixture(t)
+	f.ready()
+
+	// The config provider rolled a bad change back and says so.
+	f.configStatus(false, true)
+	f.reconcile()
+
+	router := f.router()
+	if conditions.IsTrue(router.Status.Conditions, corev1alpha1.ConfigAppliedCondition) {
+		t.Error("ConfigApplied is True for a configuration the router refused")
+	}
+	// Otherwise the health check would reboot and then replace a router
+	// that works, and the replacement would refuse the same configuration.
+	if !conditions.IsTrue(router.Status.Conditions, corev1alpha1.ReadyCondition) {
+		t.Errorf("Ready = %+v", conditions.Get(router.Status.Conditions, corev1alpha1.ReadyCondition))
 	}
 }
 

@@ -24,6 +24,7 @@ import (
 
 	corev1alpha1 "github.com/hauke-cloud/router-api/api/core/v1alpha1"
 	"github.com/hauke-cloud/router-api/internal/conditions"
+	"github.com/hauke-cloud/router-api/internal/pace"
 )
 
 // Condition reasons set by this controller.
@@ -160,7 +161,7 @@ func (r *Reconciler) reconcile(ctx context.Context, check *corev1alpha1.RouterHe
 		conditions.False(&status.Conditions, check.Generation, corev1alpha1.RemediationAllowedCondition, ReasonTooManyUnhealthy,
 			fmt.Sprintf("%d of %d routers are unhealthy, more than the %d that may be remediated at once; nothing is touched",
 				len(unhealthy), expected, limit))
-		return reconcile.Result{RequeueAfter: waitInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(waitInterval)}, nil
 	}
 	conditions.True(&status.Conditions, check.Generation, corev1alpha1.RemediationAllowedCondition, ReasonRemediationAllowed, "")
 
@@ -177,7 +178,7 @@ func (r *Reconciler) reconcile(ctx context.Context, check *corev1alpha1.RouterHe
 	if wake == 0 {
 		// Nothing is about to time out. Look again anyway: nothing else
 		// wakes this controller when the clock is all that changes.
-		wake = waitInterval
+		wake = pace.Every(waitInterval)
 	}
 	return reconcile.Result{RequeueAfter: wake}, nil
 }

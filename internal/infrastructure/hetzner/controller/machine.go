@@ -23,6 +23,7 @@ import (
 	"github.com/hauke-cloud/router-api/internal/conditions"
 	"github.com/hauke-cloud/router-api/internal/contract"
 	"github.com/hauke-cloud/router-api/internal/infrastructure/hetzner/cloud"
+	"github.com/hauke-cloud/router-api/internal/pace"
 )
 
 // MachineReconciler reconciles HetznerMachines: one Hetzner Cloud server
@@ -107,7 +108,7 @@ func (r *MachineReconciler) reconcileNormal(ctx context.Context, machine *infrav
 	}
 	if owner == nil {
 		notReady(machine, ReasonWaitingForOwner, "not owned by a RouterMachine yet")
-		return reconcile.Result{RequeueAfter: pollInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(pollInterval)}, nil
 	}
 	if _, paused := owner.Annotations[corev1alpha1.PausedAnnotation]; paused {
 		return reconcile.Result{}, nil
@@ -122,7 +123,7 @@ func (r *MachineReconciler) reconcileNormal(ctx context.Context, machine *infrav
 	}
 	if problem != "" {
 		notReady(machine, ReasonNetworkNotReady, problem)
-		return reconcile.Result{RequeueAfter: pollInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(pollInterval)}, nil
 	}
 
 	if controllerutil.AddFinalizer(machine, infrav1alpha1.HetznerMachineFinalizer) {
@@ -142,7 +143,7 @@ func (r *MachineReconciler) reconcileNormal(ctx context.Context, machine *infrav
 	case server.Labels[MachineUIDLabel] != string(machine.UID):
 		notReady(machine, ReasonNameConflict,
 			fmt.Sprintf("a server named %s exists and was not created for this object", server.Name))
-		return reconcile.Result{RequeueAfter: settledInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(settledInterval)}, nil
 	}
 
 	if server == nil {
@@ -153,14 +154,14 @@ func (r *MachineReconciler) reconcileNormal(ctx context.Context, machine *infrav
 			// router is not this controller's decision.
 			status.ServerStatus = ""
 			notReady(machine, ReasonServerNotFound, fmt.Sprintf("server %s no longer exists", machine.Spec.ProviderID))
-			return reconcile.Result{RequeueAfter: settledInterval}, nil
+			return reconcile.Result{RequeueAfter: pace.Every(settledInterval)}, nil
 		}
 		server, err = r.create(ctx, machine, owner, network, hcloud)
 		if err != nil {
 			return reconcile.Result{}, err
 		}
 		if server == nil {
-			return reconcile.Result{RequeueAfter: pollInterval}, nil
+			return reconcile.Result{RequeueAfter: pace.Every(pollInterval)}, nil
 		}
 	}
 
@@ -181,11 +182,11 @@ func (r *MachineReconciler) reconcileNormal(ctx context.Context, machine *infrav
 	status.Addresses = addresses(server)
 	if server.Status != cloud.ServerStatusRunning {
 		notReady(machine, ReasonServerNotRunning, "the server is "+server.Status)
-		return reconcile.Result{RequeueAfter: pollInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(pollInterval)}, nil
 	}
 	status.Initialization = &infrav1alpha1.HetznerMachineInitialization{Provisioned: ptr.To(true)}
 	conditions.True(&status.Conditions, machine.Generation, corev1alpha1.ReadyCondition, ReasonServerRunning, "")
-	return reconcile.Result{RequeueAfter: settledInterval}, nil
+	return reconcile.Result{RequeueAfter: pace.Every(settledInterval)}, nil
 }
 
 func (r *MachineReconciler) owner(ctx context.Context, machine *infrav1alpha1.HetznerMachine) (*corev1alpha1.RouterMachine, error) {
@@ -296,7 +297,7 @@ func (r *MachineReconciler) reconcileDelete(ctx context.Context, machine *infrav
 		// now would leave it running and billed with nothing in the cluster
 		// that knows about it.
 		notReady(machine, ReasonNetworkNotReady, "cannot delete the server: "+problem)
-		return reconcile.Result{RequeueAfter: pollInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(pollInterval)}, nil
 	}
 
 	server, err := hcloud.ServerByName(ctx, ServerName(machine))
@@ -315,7 +316,7 @@ func (r *MachineReconciler) reconcileDelete(ctx context.Context, machine *infrav
 		// Deletion is asynchronous at Hetzner. Look again before letting go.
 		notReady(machine, ReasonDeleting, "waiting for the server to be deleted")
 		if _, err := hcloud.ServerByName(ctx, ServerName(machine)); !errors.Is(err, cloud.ErrNotFound) {
-			return reconcile.Result{RequeueAfter: pollInterval}, client.IgnoreNotFound(err)
+			return reconcile.Result{RequeueAfter: pace.Every(pollInterval)}, client.IgnoreNotFound(err)
 		}
 	}
 

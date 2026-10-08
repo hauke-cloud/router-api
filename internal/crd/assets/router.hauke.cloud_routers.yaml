@@ -40,6 +40,13 @@ spec:
         description: |-
           Router is one router: an instance and the configuration it runs. It is the
           object to look at to know whether a router works.
+
+          Ready means the router is in service: its machine runs, it has been
+          configured and it is healthy. Whether it runs the latest configuration is
+          the ConfigApplied condition, which is deliberately not part of Ready. A
+          router that is applying a change, or refused one, still forwards traffic on
+          the configuration it had, and must be neither counted as down nor "repaired"
+          for it.
         properties:
           apiVersion:
             description: |-
@@ -198,6 +205,12 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              configured:
+                description: |-
+                  Configured is true once the router has run a configuration of ours.
+                  It does not go back to false: a router that is waiting for a newer
+                  configuration, or rejected one, still runs the one before.
+                type: boolean
               observedGeneration:
                 description: ObservedGeneration is the generation this status was
                   computed from.

@@ -34,6 +34,12 @@ type Cloud struct {
 	Tokens []string
 	// Err, if set, is returned by every call.
 	Err error
+	// OnCreate, if set, is called for every server that is created and may
+	// change it, for instance to give it an address something listens on.
+	OnCreate func(spec *cloud.ServerSpec, server *cloud.Server)
+	// OnDelete and OnReset, if set, are called with the server's name.
+	OnDelete func(name string)
+	OnReset  func(name string)
 }
 
 // New returns an empty project with the given networks.
@@ -282,6 +288,9 @@ func (c *Cloud) CreateServer(_ context.Context, spec *cloud.ServerSpec) (*cloud.
 	if spec.NetworkID != 0 {
 		server.PrivateIPs = []netip.Addr{netip.AddrFrom4([4]byte{10, 0, 1, n})}
 	}
+	if c.OnCreate != nil {
+		c.OnCreate(spec, server)
+	}
 	c.servers[id] = server
 	c.specs[id] = *spec
 	created := *server
@@ -295,6 +304,9 @@ func (c *Cloud) DeleteServer(_ context.Context, id int64) error {
 	if c.Err != nil {
 		return c.Err
 	}
+	if server, ok := c.servers[id]; ok && c.OnDelete != nil {
+		c.OnDelete(server.Name)
+	}
 	delete(c.servers, id)
 	return nil
 }
@@ -306,9 +318,13 @@ func (c *Cloud) ResetServer(_ context.Context, id int64) error {
 	if c.Err != nil {
 		return c.Err
 	}
-	if _, ok := c.servers[id]; !ok {
+	server, ok := c.servers[id]
+	if !ok {
 		return fmt.Errorf("server %d: %w", id, cloud.ErrNotFound)
 	}
 	c.resets[id]++
+	if c.OnReset != nil {
+		c.OnReset(server.Name)
+	}
 	return nil
 }
