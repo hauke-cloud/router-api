@@ -52,8 +52,7 @@ app.kubernetes.io/component: {{ .manager }}
 {{- end }}
 
 {{/*
-Permissions every manager needs: its leader election lease, events, and the
-CustomResourceDefinitions it installs.
+Permissions every manager needs on the objects it works with.
 */}}
 {{- define "router-api.commonRules" -}}
 - apiGroups: [""]
@@ -62,9 +61,36 @@ CustomResourceDefinitions it installs.
 - apiGroups: ["events.k8s.io"]
   resources: ["events"]
   verbs: ["create", "patch"]
-{{- if .Values.crds.install }}
-- apiGroups: ["apiextensions.k8s.io"]
-  resources: ["customresourcedefinitions"]
-  verbs: ["get", "list", "watch", "create", "patch"]
 {{- end }}
+
+{{/*
+A binding of a manager's ClusterRole to its ServiceAccount. Cluster-wide by
+default. With watchNamespace it is a RoleBinding in that namespace: a
+RoleBinding to a ClusterRole grants the role's permissions in the binding's
+namespace and nowhere else, so a manager that only watches one namespace
+cannot read the Secrets of the others.
+Call with (dict "root" $ "manager" "core" "role" "<name of the ClusterRole>").
+*/}}
+{{- define "router-api.binding" -}}
+apiVersion: rbac.authorization.k8s.io/v1
+{{- if .root.Values.watchNamespace }}
+kind: RoleBinding
+metadata:
+  name: {{ .role }}
+  namespace: {{ .root.Values.watchNamespace }}
+{{- else }}
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .role }}
+{{- end }}
+  labels:
+    {{- include "router-api.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .role }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "router-api.managerName" . }}
+    namespace: {{ .root.Release.Namespace }}
 {{- end }}

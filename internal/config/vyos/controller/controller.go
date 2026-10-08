@@ -574,6 +574,21 @@ func (r *Reconciler) applyConfig(ctx context.Context, config *configv1alpha1.VyO
 		return
 	}
 	if len(changes) == 0 {
+		// The router runs what is wanted. That is only the same as
+		// "applied" if this configuration is known to have been confirmed
+		// and saved. If the last word on it was a failure, or it was never
+		// recorded as applied, a commit may still be waiting for its
+		// confirmation, about to be undone by the router.
+		if status.AppliedHash != desiredHash || status.FailedHash != "" {
+			if err := apply.Settle(ctx, api); err != nil {
+				if errors.Is(err, apply.ErrUnconfirmed) {
+					notApplied(ReasonUnconfirmed, err)
+				} else {
+					notApplied(ReasonApplyFailed, err)
+				}
+				return
+			}
+		}
 		status.AppliedHash, status.RunningHash = desiredHash, runningHash
 		status.FailedHash, status.LastFailureTime = "", nil
 		conditions.True(&status.Conditions, generation, corev1alpha1.ConfigAppliedCondition, ReasonApplied, "")
