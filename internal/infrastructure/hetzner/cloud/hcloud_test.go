@@ -118,13 +118,13 @@ func TestCreateServer(t *testing.T) {
 	a, c := newAPI(t, map[string]string{
 		"GET /server_types?name=cx23":   `{"server_types":[{"id":3,"name":"cx23","architecture":"x86"}]}`,
 		"GET /images?name=ubuntu-24.04": `{"images":[{"id":99,"name":"ubuntu-24.04","type":"system","architecture":"x86"}]}`,
-		"GET /ssh_keys?name=yubikey":    `{"ssh_keys":[{"id":5,"name":"yubikey"}]}`,
+		"GET /ssh_keys?name=admin":      `{"ssh_keys":[{"id":5,"name":"admin"}]}`,
 		"POST /servers":                 `{"server":` + serverJSON + `,"action":{"id":1,"status":"running"},"next_actions":[],"root_password":null}`,
 	})
 
 	server, err := c.CreateServer(context.Background(), &ServerSpec{
 		Name: "edge-abc", ServerType: "cx23", Location: "fsn1", Image: "ubuntu-24.04",
-		UserData: "#cloud-config\n", Labels: map[string]string{"a": "b"}, SSHKeys: []string{"yubikey"},
+		UserData: "#cloud-config\n", Labels: map[string]string{"a": "b"}, SSHKeys: []string{"admin"},
 		NetworkID: 7, FirewallID: 8, PlacementGroupID: 9, EnableIPv4: true, EnableIPv6: false,
 	})
 	if err != nil {

@@ -69,7 +69,7 @@ func newFixture(t *testing.T) *fixture {
 						{Protocol: "icmp", SourceCIDRs: []string{"0.0.0.0/0"}},
 					},
 				},
-				SSHKeys: []string{"yubikey"},
+				SSHKeys: []string{"admin"},
 			},
 		},
 	}

@@ -81,7 +81,7 @@ func TestMachineCreatesAServer(t *testing.T) {
 	if !spec.EnableIPv4 || !spec.EnableIPv6 {
 		t.Errorf("public net = %v/%v", spec.EnableIPv4, spec.EnableIPv6)
 	}
-	if len(spec.SSHKeys) != 1 || spec.SSHKeys[0] != "yubikey" {
+	if len(spec.SSHKeys) != 1 || spec.SSHKeys[0] != "admin" {
 		t.Errorf("ssh keys = %v", spec.SSHKeys)
 	}
 	machine := f.hetznerMachine()
