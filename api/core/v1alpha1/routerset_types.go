@@ -20,9 +20,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// RouterSetFinalizer keeps a RouterSet until its routers are gone.
-const RouterSetFinalizer = "router.hauke.cloud/routerset"
-
 // ObjectMeta is the part of an object's metadata a template may set.
 type ObjectMeta struct {
 	// Labels added to the created object.
