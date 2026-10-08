@@ -51,20 +51,37 @@ rules:
   {{- end }}
 {{- end }}
 ---
+{{ include "router-api.binding" (dict "root" $ "manager" $manager "role" (include "router-api.managerName" $ctx)) }}
+{{- if $.Values.crds.install }}
+---
+# CustomResourceDefinitions are cluster-scoped, so installing them is the one
+# permission that cannot be confined to a namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "router-api.managerName" $ctx }}-crds
+  labels:
+    {{- include "router-api.labels" $ctx | nindent 4 }}
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "router-api.managerName" $ctx }}
+  name: {{ include "router-api.managerName" $ctx }}-crds
   labels:
     {{- include "router-api.labels" $ctx | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "router-api.managerName" $ctx }}
+  name: {{ include "router-api.managerName" $ctx }}-crds
 subjects:
   - kind: ServiceAccount
     name: {{ include "router-api.managerName" $ctx }}
     namespace: {{ $.Release.Namespace }}
+{{- end }}
 ---
 # Leader election happens in the release namespace.
 apiVersion: rbac.authorization.k8s.io/v1

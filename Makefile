@@ -29,7 +29,8 @@ CONTROLLER_GEN         ?= go run sigs.k8s.io/controller-tools/cmd/controller-gen
 
 # envtest runs the integration tests against a real kube-apiserver and etcd.
 ENVTEST_K8S_VERSION ?= 1.37
-SETUP_ENVTEST       ?= go run sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.25
+SETUP_ENVTEST_VERSION ?= v0.25.2
+SETUP_ENVTEST         ?= go run sigs.k8s.io/controller-runtime/tools/setup-envtest@$(SETUP_ENVTEST_VERSION)
 
 # The generated CRDs live inside the package that embeds them. There is
 # exactly one copy on purpose: each manager installs the CRDs of its own API
@@ -129,8 +130,13 @@ generate-check: ## Fail if generated code is behind the Go types
 
 ##@ Container image
 
+.PHONY: container-engine
+container-engine:
+	@test -n "$(CONTAINER_ENGINE)" || { \
+	  echo "no container engine found: start docker, install podman, or set CONTAINER_ENGINE" >&2; exit 1; }
+
 .PHONY: image
-image: ## Build the container image for the host platform
+image: container-engine ## Build the container image for the host platform
 	$(CONTAINER_ENGINE) build \
 	  --build-arg VERSION=$(VERSION) \
 	  --build-arg COMMIT=$(COMMIT) \
@@ -147,10 +153,17 @@ helm-lint: ## Lint the chart and render it with every option exercised
 	helm template router-api $(CHART_DIR) --namespace router-api > /dev/null
 	helm template router-api $(CHART_DIR) --namespace router-api \
 	  --set metrics.serviceMonitor.enabled=true \
-	  --set watchNamespace=routers \
-	  --set crds.install=false \
 	  --set managers.config-vyos.enabled=false \
 	  --set 'managers.core.extraArgs[0]=-log-level=debug' > /dev/null
+	@# Confined to a namespace and with the CRDs installed out of band, no
+	@# manager may be left with a permission that reaches beyond it.
+	@rendered="$$(helm template router-api $(CHART_DIR) --namespace router-api \
+	  --set watchNamespace=routers --set crds.install=false)"; \
+	if echo "$$rendered" | grep -q '^kind: ClusterRoleBinding'; then \
+	  echo "with watchNamespace set the chart still renders a ClusterRoleBinding" >&2; exit 1; \
+	fi; \
+	echo "$$rendered" | grep -q '^  namespace: routers' || { \
+	  echo "with watchNamespace set no RoleBinding is rendered in that namespace" >&2; exit 1; }
 
 # CI rewrites every "tag:" line in values.yaml to the release version.
 .PHONY: tag-guard
