@@ -2,10 +2,6 @@
 #
 # Hands the host's network interfaces to VyOS and starts it.
 #
-# NOT YET VERIFIED ON A HETZNER SERVER (docs/spike-vyos-container.md, "Limits
-# of this spike"). The container part of the bootstrap is verified; this
-# script is the part that still has to be run for real.
-#
 # VyOS only manages interfaces named ethN and expects to be the only thing
 # configuring them. Ubuntu names the private interface after its PCI slot and
 # has netplan configure both. So, once everything that needs the network has
@@ -23,13 +19,18 @@ log() { echo "router-api-host-setup: $*"; }
 # missing module fail now and visibly rather than at the first commit.
 modprobe -a wireguard nf_conntrack nf_tables 2>/dev/null || log "could not preload kernel modules"
 
-# Needs the network, so it has to happen before the hand-over.
-log "pulling ${IMAGE}"
-for attempt in 1 2 3 4 5; do
-  podman pull "${IMAGE}" && break
-  [ "${attempt}" = 5 ] && { log "could not pull ${IMAGE}"; exit 1; }
-  sleep 10
-done
+# Needs the network, so it has to happen before the hand-over. An image that
+# is already there, as in a pre-baked snapshot, is not fetched again.
+if podman image exists "${IMAGE}"; then
+  log "${IMAGE} is already present"
+else
+  log "pulling ${IMAGE}"
+  for attempt in 1 2 3 4 5; do
+    podman pull "${IMAGE}" && break
+    [ "${attempt}" = 5 ] && { log "could not pull ${IMAGE}"; exit 1; }
+    sleep 10
+  done
+fi
 
 public="$(ip -o -4 route show default | awk '{print $5; exit}')"
 [ -n "${public}" ] || { log "no default route, cannot tell which interface is public"; exit 1; }
@@ -68,6 +69,29 @@ if [ "${#others[@]}" -gt 0 ]; then
   rename "${others[0]}" "${PRIVATE_NAME}"
 fi
 
+# From here on the host has no network of its own. If VyOS does not start,
+# give it one back: a server that can be logged in to can be debugged, one
+# that cannot has to be rescued.
+recover() {
+  log "starting VyOS failed, restoring the host's own network"
+  rm -f /etc/cloud/cloud.cfg.d/99-router-api-network.cfg
+  {
+    echo "network:"
+    echo "  version: 2"
+    echo "  ethernets:"
+    for name in "${PUBLIC_NAME}" "${PRIVATE_NAME}"; do
+      [ -e "/sys/class/net/${name}" ] && printf '    %s:\n      dhcp4: true\n' "${name}"
+    done
+  } > /etc/netplan/99-router-api-recovery.yaml
+  chmod 600 /etc/netplan/99-router-api-recovery.yaml
+  systemctl enable --now systemd-networkd.service || true
+  netplan apply || true
+}
+trap recover ERR
+
+# The unit is generated from the quadlet file at daemon-reload and takes its
+# place in the boot from the file's [Install] section. It cannot be enabled,
+# only started.
 systemctl daemon-reload
-systemctl enable --now vyos.service
+systemctl start vyos.service
 log "VyOS started"
