@@ -3,6 +3,7 @@ module github.com/hauke-cloud/router-api
 go 1.27.1
 
 require (
+	github.com/go-logr/logr v1.4.3
 	github.com/hetznercloud/hcloud-go/v2 v2.52.0
 	github.com/prometheus/client_golang v1.24.1
 	k8s.io/api v0.37.1
@@ -22,7 +23,6 @@ require (
 	github.com/evanphx/json-patch/v5 v5.9.11 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
-	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-openapi/jsonpointer v1.0.0 // indirect
 	github.com/go-openapi/jsonreference v1.0.0 // indirect
 	github.com/go-openapi/swag v0.27.1 // indirect

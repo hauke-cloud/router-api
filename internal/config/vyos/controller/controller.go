@@ -86,11 +86,12 @@ type Reconciler struct {
 	Now func() time.Time
 }
 
-// SetupWithManager registers the controller.
+// SetupWithManager registers the controller. The Secrets it creates are not
+// watched: that would mean caching every Secret the manager can see. A
+// router is looked at every checkInterval anyway.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&configv1alpha1.VyOSConfig{}).
-		Owns(&corev1.Secret{}).
 		Complete(r)
 }
 
