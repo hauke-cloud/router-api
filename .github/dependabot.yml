@@ -1,0 +1,37 @@
+version: 2
+updates:
+  # The Kubernetes libraries move together: client-go, apimachinery, api and
+  # controller-runtime are released as a set, and mixing versions from
+  # different sets produces compile errors rather than subtle bugs. Grouping
+  # them means one pull request that either builds or does not.
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      kubernetes:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+      go-minor-and-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+
+  # The builder and the runtime base image. The runtime is distroless, so a
+  # bump here is usually a CA certificate refresh.
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly

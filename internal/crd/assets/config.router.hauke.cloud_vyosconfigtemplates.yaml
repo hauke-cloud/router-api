@@ -1,0 +1,342 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: vyosconfigtemplates.config.router.hauke.cloud
+spec:
+  group: config.router.hauke.cloud
+  names:
+    categories:
+    - router-api
+    kind: VyOSConfigTemplate
+    listKind: VyOSConfigTemplateList
+    plural: vyosconfigtemplates
+    shortNames:
+    - vct
+    singular: vyosconfigtemplate
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.template.spec.image
+      name: Image
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          VyOSConfigTemplate is the mould VyOSConfigs are created from, and the place
+          to edit the configuration of a group of routers.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: VyOSConfigTemplateSpec wraps the config to stamp out.
+            properties:
+              template:
+                description: Template of the configs.
+                properties:
+                  metadata:
+                    description: Metadata copied to every VyOSConfig.
+                    properties:
+                      annotations:
+                        additionalProperties:
+                          type: string
+                        description: Annotations added to the created object.
+                        type: object
+                      labels:
+                        additionalProperties:
+                          type: string
+                        description: Labels added to the created object.
+                        type: object
+                    type: object
+                  spec:
+                    description: Spec of the configs.
+                    properties:
+                      commands:
+                        description: |-
+                          Commands is the router's configuration as VyOS "set" commands, one per
+                          line; empty lines and lines starting with # are ignored. It is a Go
+                          template, see docs/configuration.md for the data it is rendered with.
+                          The router is made to match it exactly: what is not listed is deleted,
+                          apart from what the operator itself needs to stay in contact.
+                        maxLength: 524288
+                        type: string
+                      files:
+                        description: Files placed below /config at first boot.
+                        items:
+                          description: |-
+                            File is a file placed on the router when it is first booted, below /config,
+                            the directory VyOS keeps across upgrades. Files are part of the bootstrap
+                            data: changing one replaces the router.
+                          properties:
+                            configMapKeyRef:
+                              description: ConfigMapKeyRef reads the value from a
+                                ConfigMap in the same namespace.
+                              properties:
+                                key:
+                                  description: |-
+                                    The key to select from the ConfigMap's Data field.
+                                    Keys in the BinaryData field are not currently propagated to container env vars.
+                                  type: string
+                                name:
+                                  default: ""
+                                  description: |-
+                                    Name of the referent.
+                                    This field is effectively required, but due to backwards compatibility is
+                                    allowed to be empty. Instances of this type with an empty value here are
+                                    almost certainly wrong.
+                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                  type: string
+                                optional:
+                                  description: Specify whether the ConfigMap or its
+                                    key must be defined
+                                  type: boolean
+                              required:
+                              - key
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            path:
+                              description: Path of the file. It has to be below /config.
+                              maxLength: 255
+                              pattern: ^/config/[A-Za-z0-9._/-]+$
+                              type: string
+                            permissions:
+                              default: "0600"
+                              description: Permissions as an octal string.
+                              pattern: ^0[0-7]{3}$
+                              type: string
+                            secretKeyRef:
+                              description: SecretKeyRef reads the value from a Secret
+                                in the same namespace.
+                              properties:
+                                key:
+                                  description: The key of the secret to select from.  Must
+                                    be a valid secret key.
+                                  type: string
+                                name:
+                                  default: ""
+                                  description: |-
+                                    Name of the referent.
+                                    This field is effectively required, but due to backwards compatibility is
+                                    allowed to be empty. Instances of this type with an empty value here are
+                                    almost certainly wrong.
+                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                  type: string
+                                optional:
+                                  description: Specify whether the Secret or its key
+                                    must be defined
+                                  type: boolean
+                              required:
+                              - key
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            value:
+                              description: Value is a literal.
+                              maxLength: 65536
+                              type: string
+                          required:
+                          - path
+                          type: object
+                          x-kubernetes-validations:
+                          - message: exactly one of value, secretKeyRef and configMapKeyRef
+                              is required
+                            rule: '(has(self.value) ? 1 : 0) + (has(self.secretKeyRef)
+                              ? 1 : 0) + (has(self.configMapKeyRef) ? 1 : 0) == 1'
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - path
+                        x-kubernetes-list-type: map
+                      host:
+                        description: Host the container runs on.
+                        properties:
+                          privateInterface:
+                            default: eth1
+                            description: PrivateInterface is the name the host's private
+                              network interface gets.
+                            pattern: ^eth[0-9]+$
+                            type: string
+                          publicInterface:
+                            default: eth0
+                            description: |-
+                              PublicInterface is the name the host's public network interface gets,
+                              and the name the configuration refers to it by.
+                            pattern: ^eth[0-9]+$
+                            type: string
+                        type: object
+                      image:
+                        description: Image is the VyOS container image, by digest
+                          for a reproducible router.
+                        maxLength: 512
+                        minLength: 1
+                        type: string
+                      management:
+                        description: Management connection to the router.
+                        properties:
+                          addressType:
+                            default: ExternalIP
+                            description: AddressType of the machine address the operator
+                              connects to.
+                            enum:
+                            - Hostname
+                            - ExternalIP
+                            - InternalIP
+                            - ExternalDNS
+                            - InternalDNS
+                            type: string
+                          allowedSources:
+                            description: |-
+                              AllowedSources restricts the API on the router itself to these source
+                              ranges, in addition to whatever firewall the infrastructure has. Leave
+                              it empty when the operator's address changes.
+                            items:
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: set
+                          confirmTimeoutMinutes:
+                            default: 2
+                            description: |-
+                              ConfirmTimeoutMinutes is how long the router waits for the operator to
+                              confirm a change before it reverts it by itself. A change that cuts the
+                              operator off is undone after this time.
+                            format: int32
+                            maximum: 60
+                            minimum: 1
+                            type: integer
+                          port:
+                            default: 443
+                            description: Port the router's HTTPS API listens on.
+                            format: int32
+                            maximum: 65535
+                            minimum: 1
+                            type: integer
+                        type: object
+                      values:
+                        description: Values available to the templates.
+                        items:
+                          description: |-
+                            Value is a named input of the configuration template, available there as
+                            {{ .Values.<name> }}.
+                          properties:
+                            configMapKeyRef:
+                              description: ConfigMapKeyRef reads the value from a
+                                ConfigMap in the same namespace.
+                              properties:
+                                key:
+                                  description: |-
+                                    The key to select from the ConfigMap's Data field.
+                                    Keys in the BinaryData field are not currently propagated to container env vars.
+                                  type: string
+                                name:
+                                  default: ""
+                                  description: |-
+                                    Name of the referent.
+                                    This field is effectively required, but due to backwards compatibility is
+                                    allowed to be empty. Instances of this type with an empty value here are
+                                    almost certainly wrong.
+                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                  type: string
+                                optional:
+                                  description: Specify whether the ConfigMap or its
+                                    key must be defined
+                                  type: boolean
+                              required:
+                              - key
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            name:
+                              description: Name of the value.
+                              maxLength: 63
+                              pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+                              type: string
+                            secretKeyRef:
+                              description: SecretKeyRef reads the value from a Secret
+                                in the same namespace.
+                              properties:
+                                key:
+                                  description: The key of the secret to select from.  Must
+                                    be a valid secret key.
+                                  type: string
+                                name:
+                                  default: ""
+                                  description: |-
+                                    Name of the referent.
+                                    This field is effectively required, but due to backwards compatibility is
+                                    allowed to be empty. Instances of this type with an empty value here are
+                                    almost certainly wrong.
+                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                  type: string
+                                optional:
+                                  description: Specify whether the Secret or its key
+                                    must be defined
+                                  type: boolean
+                              required:
+                              - key
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            value:
+                              description: Value is a literal.
+                              maxLength: 65536
+                              type: string
+                          required:
+                          - name
+                          type: object
+                          x-kubernetes-validations:
+                          - message: exactly one of value, secretKeyRef and configMapKeyRef
+                              is required
+                            rule: '(has(self.value) ? 1 : 0) + (has(self.secretKeyRef)
+                              ? 1 : 0) + (has(self.configMapKeyRef) ? 1 : 0) == 1'
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                    required:
+                    - image
+                    type: object
+                required:
+                - spec
+                type: object
+            required:
+            - template
+            type: object
+          status:
+            description: VyOSConfigTemplateStatus is the observed state of a VyOSConfigTemplate.
+            properties:
+              observedGeneration:
+                description: ObservedGeneration is the generation this status was
+                  computed from.
+                format: int64
+                type: integer
+              replacementHash:
+                description: |-
+                  ReplacementHash covers the fields a router cannot change while it
+                  runs. Core controllers replace routers when it changes and update them
+                  in place when only the rest of the template did.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

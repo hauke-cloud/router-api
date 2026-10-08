@@ -1,0 +1,327 @@
+# General
+.DS_Store
+Thumbs.db
+*.log
+*.swp
+*.swo
+*.bak
+*.tmp
+*.temp
+**/*.unsealed
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyp
+*.pki
+*.so
+*.egg-info/
+.env
+.venv/
+venv/
+env/
+Pipfile.lock
+poetry.lock
+
+# JavaScript / Node.js
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+yarn.lock
+dist/
+coverage/
+*.js.map
+*.mjs.map
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+*.iml
+*.project
+*.classpath
+target/
+build/
+
+# C / C++
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.out
+*.class
+
+# Go
+vendor/
+*.exe
+*.test
+*.out
+
+# Rust
+/target/
+/Cargo.lock
+
+# Ruby
+*.gem
+*.rbc
+vendor/
+.bundle/
+/log/
+/tmp/
+/coverage/
+/spec/reports/
+.redcar/
+/.sass-cache/
+/.rspec
+.ruby-version
+.ruby-gemset
+
+# PHP
+/vendor/
+/composer.lock
+
+# Swift
+build/
+DerivedData/
+*.xcworkspace
+*.xcuserstate
+*.xcuserdata
+*.xcodeproj
+
+# Kotlin
+*.class
+*.jar
+*.war
+*.ear
+*.iml
+*.project
+*.classpath
+target/
+build/
+
+# .NET
+*.exe
+*.dll
+*.pdb
+*.vscode/
+bin/
+obj/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Android
+.gradle/
+/local.properties
+/.idea/caches/
+/.idea/libraries/
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+/.idea/gradle.xml
+/.idea/dictionaries/
+/.idea/caches/
+/.idea/libraries/
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+/.idea/gradle.xml
+/.idea/dictionaries/
+*.iml
+.gradle/
+local.properties
+/.idea
+/.idea/
+captures/
+output.json
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+.nfs*
+
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Vim
+*.swp
+*.swo
+*.swn
+*.bak
+
+# JetBrains IDEs
+.idea/
+*.iml
+*.iws
+.idea/workspace.xml
+.idea/libraries
+.idea/tasks.xml
+.idea/vcs.xml
+.idea/jsLibraryMappings.xml
+.idea/.idea/
+.idea/modules.xml
+.idea/artifacts/
+.idea/dictionaries/
+.idea/vcs.xml
+.idea/jsLibraryMappings.xml
+.idea/workspace.xml
+.idea/modules.xml
+.idea/artifacts/
+.idea/dictionaries/
+
+# Visual Studio Code
+.vscode/
+.history/
+*.code-workspace
+.vscode/
+
+# Eclipse
+.project
+.classpath
+.settings/
+bin/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+.idea/workspace.xml
+.idea/libraries
+.idea/tasks.xml
+.idea/vcs.xml
+.idea/jsLibraryMappings.xml
+.idea/modules.xml
+.idea/artifacts/
+.idea/dictionaries/
+
+# Android Studio
+.gradle/
+/.idea/
+/captures/
+output.json
+
+# Xcode
+.DS_Store
+build/
+DerivedData/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+*.xcworkspace
+xcuserdata
+profile
+*.moved-aside
+*.xcuserstate
+*.xcscmblueprint
+
+# Emacs
+*~
+\#*\#
+/.auto-save-list/
+tramp
+.elc
+
+# LaTeX
+*.aux
+*.bbl
+*.blg
+*.brf
+*.idx
+*.ilg
+*.ind
+*.lof
+*.log
+*.lot
+*.out
+*.toc
+*.dvi
+*.nav
+*.snm
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+*.pdfsync
+*.synctex.gz
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Haskell
+dist/
+dist-newstyle/
+cabal-dev/
+*.prof
+*.eventlog
+*.hp
+*.tix
+.stack-work/
+cabal.project.local
+cabal.project.local.*
+.cache/
+*.cabal.sandbox.config
+.ghc.environment.*
+cabal.sandbox.config
+cabal.sandbox.config.*
+package.cache
+.stackage-work/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# System Files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Thumbnails
+._*
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Backup files
+*.bak
+*.tmp
+*.temp
+
+# End of .gitignore
+
+
+# sandman
+/bin/
+coverage.out
+*.tgz
