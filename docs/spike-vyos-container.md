@@ -102,6 +102,28 @@ what the operator generates.
 | **Failover: the master was powered off hard while its Floating IP was pinged five times a second. The address was unreachable for 6.0 s.** The backup became master about 4 s after the power-off was issued, moved both addresses, and answered. | |
 | Hetzner's API specification limits user data to 32 KiB; the user data for the example is 8.3 KB. | |
 
+### The operator, end to end
+
+`make e2e` (test/e2e) ran the three managers, as shipped, against Hetzner. Only
+the Kubernetes API server was not a real cluster's.
+
+| | Observed |
+| --- | --- |
+| Two routers from a new `RouterDeployment` | `Ready` 1 min 46 s after the deployment was created, the Floating IP on the VRRP master |
+| A change to `values` | applied in place, one router after the other, in 31 s; the servers stayed the same |
+| A change to `files` | both routers replaced in 9 min 15 s, two routers `Ready` at every moment |
+| The Floating IP, probed four times a second through the change and the replacement | longest interruption 300 ms |
+| Deleting everything | no server, firewall or placement group left |
+
+What the first runs of it found, all fixed:
+
+| Finding | Consequence |
+| --- | --- |
+| A connection to a server that is still booting is neither accepted nor refused. The first attempt hung for the two minutes a commit may take, and the routers needed seven minutes to become ready. | The client gives up connecting after five seconds. |
+| The test configuration had no name server. VRRP elected a master, everything was `Ready`, and the Floating IP was assigned to nobody: `hcloud-vrrp-failover` has to resolve `api.hetzner.cloud`. | Documented, and in the example. The operator does not see this failure; see "Not established". |
+| A configuration change reached both routers within seconds of each other. The RouterSet decided whether a router had applied a change by the Router's copy of `ConfigApplied`, which is one poll behind the config object. | It reads the config object. |
+| At the end of a replacement the Floating IP was assigned to nobody. The new master tried to take it while the server that held it was being deleted. | `hcloud-vrrp-failover` tries again every two seconds until it has succeeded or its timeout is up. |
+
 A router's firewall is the host's: VyOS runs in the host's network namespace.
 A rule set with a default of drop on input also closes SSH to the host unless
 it says otherwise.
@@ -111,3 +133,9 @@ it says otherwise.
 - Traffic through the WireGuard tunnel, and BGP with a peer: no lab router was
   connected in any test.
 - IPv6. The servers had IPv6 addresses; nothing was done with them.
+- A failover that fails is invisible to the operator. If `hcloud-vrrp-failover`
+  cannot move an address, VRRP and every condition look healthy while the
+  address is somewhere else. Nothing checks that the Floating IP is on the
+  master.
+- More than one run. The end-to-end test passed once after the fixes above; it
+  has not been repeated to see how stable its timings are.
