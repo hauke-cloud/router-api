@@ -3,7 +3,7 @@ module github.com/hauke-cloud/router-api
 go 1.27.1
 
 require (
-	github.com/go-logr/logr v1.4.3
+	github.com/go-logr/logr v1.4.4
 	github.com/hetznercloud/hcloud-go/v2 v2.52.0
 	github.com/prometheus/client_golang v1.24.1
 	k8s.io/api v0.37.1
