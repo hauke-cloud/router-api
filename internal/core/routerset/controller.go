@@ -26,6 +26,7 @@ import (
 	corev1alpha1 "github.com/hauke-cloud/router-api/api/core/v1alpha1"
 	"github.com/hauke-cloud/router-api/internal/conditions"
 	"github.com/hauke-cloud/router-api/internal/contract"
+	"github.com/hauke-cloud/router-api/internal/pace"
 )
 
 // Condition reasons set by this controller.
@@ -127,7 +128,7 @@ func (r *Reconciler) reconcile(ctx context.Context, set *corev1alpha1.RouterSet)
 		}
 		conditions.False(&status.Conditions, set.Generation, corev1alpha1.AvailableCondition, ReasonTemplateNotFound, err.Error())
 		r.count(set, routers, nil)
-		return reconcile.Result{RequeueAfter: waitInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(waitInterval)}, nil
 	}
 
 	// A router whose parts are missing is finished before anything else is
@@ -175,9 +176,9 @@ func (r *Reconciler) reconcile(ctx context.Context, set *corev1alpha1.RouterSet)
 	case wake > 0:
 		return reconcile.Result{RequeueAfter: wake}, nil
 	case !settled:
-		return reconcile.Result{RequeueAfter: waitInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(waitInterval)}, nil
 	}
-	return reconcile.Result{RequeueAfter: 4 * waitInterval}, nil
+	return reconcile.Result{RequeueAfter: pace.Every(4 * waitInterval)}, nil
 }
 
 // routers lists the routers of the set that are not being deleted, oldest
@@ -336,6 +337,12 @@ func isReady(router *corev1alpha1.Router) bool {
 	return conditions.IsTrue(router.Status.Conditions, corev1alpha1.ReadyCondition)
 }
 
+// isSettled reports whether a router is in service and runs the configuration
+// its config object describes: nothing is in flight on it.
+func isSettled(router *corev1alpha1.Router) bool {
+	return isReady(router) && conditions.IsTrue(router.Status.Conditions, corev1alpha1.ConfigAppliedCondition)
+}
+
 // scaleDown removes up to excess routers and returns the ones that remain.
 // Routers that do not work go at once. A working one is first asked to hand
 // its addresses to a peer, one router at a time.
@@ -413,14 +420,18 @@ func (r *Reconciler) drain(ctx context.Context, router *corev1alpha1.Router) (bo
 // objects, at most one router per call, and returns the names of the routers
 // whose config matches the template.
 //
-// A working router is only changed while every other router works: if the
-// change breaks it, the others still carry the traffic. A router that is
-// already broken is changed first, since it has nothing to lose and the
-// change may be the fix. And when a router that already has the new
-// configuration is not ready, nothing further is changed: the change itself
-// is the first suspect.
+// A working router is only changed while every other router is settled: if
+// the change breaks it, the others still carry the traffic. A router that is
+// already out of service is changed first, since it has nothing to lose and
+// the change may be the fix. And while a router that already has the new
+// configuration has not applied it, nothing further is changed: either it is
+// still at it, or it refused, and then the change itself is the first
+// suspect.
+//
+// A router counts as up to date once it has the configuration and runs it.
 func (r *Reconciler) syncConfig(ctx context.Context, routers []corev1alpha1.Router, t *templates) (map[string]bool, error) {
 	upToDate := map[string]bool{}
+	hasSpec := map[string]bool{}
 	configs := map[string]*unstructured.Unstructured{}
 	for i := range routers {
 		router := &routers[i]
@@ -433,7 +444,8 @@ func (r *Reconciler) syncConfig(ctx context.Context, routers []corev1alpha1.Rout
 		}
 		configs[router.Name] = config
 		current, _, _ := unstructured.NestedMap(config.Object, "spec")
-		upToDate[router.Name] = equality.Semantic.DeepEqual(current, t.configSpec)
+		hasSpec[router.Name] = equality.Semantic.DeepEqual(current, t.configSpec)
+		upToDate[router.Name] = hasSpec[router.Name] && isSettled(router)
 	}
 
 	var candidate *corev1alpha1.Router
@@ -442,9 +454,9 @@ func (r *Reconciler) syncConfig(ctx context.Context, routers []corev1alpha1.Rout
 		switch {
 		case configs[router.Name] == nil:
 			continue
-		case upToDate[router.Name] && !isReady(router):
+		case hasSpec[router.Name] && !isSettled(router):
 			return upToDate, nil
-		case !upToDate[router.Name] && (candidate == nil || (isReady(candidate) && !isReady(router))):
+		case !hasSpec[router.Name] && (candidate == nil || (isReady(candidate) && !isReady(router))):
 			candidate = router
 		}
 	}
@@ -453,7 +465,7 @@ func (r *Reconciler) syncConfig(ctx context.Context, routers []corev1alpha1.Rout
 	}
 	if isReady(candidate) {
 		for i := range routers {
-			if routers[i].Name != candidate.Name && !isReady(&routers[i]) {
+			if routers[i].Name != candidate.Name && !isSettled(&routers[i]) {
 				return upToDate, nil
 			}
 		}
@@ -466,7 +478,7 @@ func (r *Reconciler) syncConfig(ctx context.Context, routers []corev1alpha1.Rout
 	if err := r.Update(ctx, config); err != nil {
 		return nil, fmt.Errorf("update %s %s: %w", config.GetKind(), config.GetName(), err)
 	}
-	upToDate[candidate.Name] = true
+	// Not up to date yet: it has the configuration, it does not run it.
 	return upToDate, nil
 }
 

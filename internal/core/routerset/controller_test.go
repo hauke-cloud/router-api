@@ -162,6 +162,28 @@ func (f *fixture) setReady(name string, ready bool, since time.Time) {
 		Type: corev1alpha1.ReadyCondition, Status: status, Reason: "Test",
 		ObservedGeneration: router.Generation, LastTransitionTime: metav1.NewTime(since),
 	})
+	if ready && conditions.Get(router.Status.Conditions, corev1alpha1.ConfigAppliedCondition) == nil {
+		// A router does not become ready without having been configured.
+		conditions.True(&router.Status.Conditions, router.Generation, corev1alpha1.ConfigAppliedCondition, "Test", "")
+	}
+	if err := k8s.Status().Update(f.ctx, router); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// setApplied plays the Router controller reporting whether the router runs
+// the configuration its config object describes.
+func (f *fixture) setApplied(name string, applied bool) {
+	f.t.Helper()
+	router := &corev1alpha1.Router{}
+	if err := k8s.Get(f.ctx, types.NamespacedName{Namespace: f.namespace, Name: name}, router); err != nil {
+		f.t.Fatal(err)
+	}
+	status := metav1.ConditionFalse
+	if applied {
+		status = metav1.ConditionTrue
+	}
+	conditions.Set(&router.Status.Conditions, router.Generation, corev1alpha1.ConfigAppliedCondition, status, "Test", "")
 	if err := k8s.Status().Update(f.ctx, router); err != nil {
 		f.t.Fatal(err)
 	}
@@ -202,7 +224,8 @@ func (f *fixture) changeCommands(commands string) {
 	}
 }
 
-func (f *fixture) upToDate(commands string) []string {
+// updated returns the routers whose config object carries the commands.
+func (f *fixture) updated(commands string) []string {
 	f.t.Helper()
 	var updated []string
 	for _, name := range names(f.routers()) {
@@ -426,27 +449,54 @@ func TestConfigChangeGoesToOneRouterAtATime(t *testing.T) {
 	f.changeCommands(changed)
 	f.reconcile()
 
-	first := f.upToDate(changed)
+	first := f.updated(changed)
 	if len(first) != 1 {
 		t.Fatalf("%d configs updated, want exactly 1", len(first))
 	}
-	if got := f.set().Status.UpToDateReplicas; got != 1 {
-		t.Errorf("upToDateReplicas = %d", got)
+
+	// The router has the new configuration and is applying it. It still
+	// forwards traffic on the old one, so it stays ready. But until it runs
+	// the new one, the other router must not be touched: if the change is
+	// bad, one router has to be left that has not seen it.
+	f.setApplied(first[0], false)
+	f.reconcile()
+	f.reconcile()
+	if got := f.updated(changed); len(got) != 1 {
+		t.Fatalf("updated %v while %s has not applied the change", got, first[0])
+	}
+	if got := f.set().Status.UpToDateReplicas; got != 0 {
+		t.Errorf("upToDateReplicas = %d: having a configuration is not running it", got)
+	}
+	if got := f.set().Status.ReadyReplicas; got != 2 {
+		t.Errorf("readyReplicas = %d: a router that is applying a change is still in service", got)
 	}
 
-	// The updated router is busy applying. Until it is ready again the
-	// other one is the only thing carrying traffic and must not be touched.
-	f.setReady(first[0], false, f.now)
+	f.setApplied(first[0], true)
 	f.reconcile()
-	f.reconcile()
-	if got := f.upToDate(changed); len(got) != 1 {
-		t.Fatalf("updated %v while %s is not ready", got, first[0])
-	}
-
-	f.setReady(first[0], true, f.now)
-	f.reconcile()
-	if got := f.upToDate(changed); len(got) != 2 {
+	if got := f.updated(changed); len(got) != 2 {
 		t.Errorf("updated = %v, want both", got)
+	}
+	if got := f.set().Status.UpToDateReplicas; got != 1 {
+		t.Errorf("upToDateReplicas = %d, want 1: the second router has not applied it yet", got)
+	}
+}
+
+func TestARefusedConfigChangeStopsAtTheFirstRouter(t *testing.T) {
+	const changed = "set firewall bogus\n"
+	f := newFixture(t, 2)
+	f.allReady()
+	f.changeCommands(changed)
+	f.reconcile()
+	first := f.updated(changed)
+
+	// The router refuses the change and keeps running what it had.
+	f.setApplied(first[0], false)
+	for range 3 {
+		f.reconcile()
+	}
+
+	if got := f.updated(changed); len(got) != 1 {
+		t.Errorf("updated = %v: a configuration one router refused was handed to the next", got)
 	}
 }
 
@@ -461,7 +511,7 @@ func TestConfigChangeReachesABrokenRouterFirst(t *testing.T) {
 
 	// A router that is already down loses nothing by being changed, and the
 	// change may be what fixes it.
-	if got := f.upToDate(changed); len(got) != 1 || got[0] != routers[1].Name {
+	if got := f.updated(changed); len(got) != 1 || got[0] != routers[1].Name {
 		t.Errorf("updated = %v, want the broken %s", got, routers[1].Name)
 	}
 }

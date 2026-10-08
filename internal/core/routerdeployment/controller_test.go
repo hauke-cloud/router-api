@@ -299,6 +299,42 @@ func TestRollingReplacement(t *testing.T) {
 	}
 }
 
+func TestRolloutWaitsForDrainingRouters(t *testing.T) {
+	f := newFixture(t, 2, "h1")
+	f.reconcile()
+	f.settle(0, -1)
+	f.changeServerType("cx33")
+	f.reconcile()
+	f.settle(2, 1)
+	f.reconcile()
+	if got := f.replicas(); got != "1,1" {
+		t.Fatalf("replicas = %s, want 1,1", got)
+	}
+
+	// The old set has been told to go down to one router, but the router it
+	// picked is still handing over: it still has two. Found by the system
+	// test, where a drain takes real time.
+	sets := f.sets()
+	old := &sets[0]
+	old.Status.Replicas, old.Status.ObservedGeneration = 2, old.Generation
+	if err := k8s.Status().Update(f.ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	f.reconcile()
+
+	// Three routers exist. A fourth would exceed maxSurge.
+	if got := f.replicas(); got != "1,1" {
+		t.Errorf("replicas = %s: the next replacement was started while the drained router still exists", got)
+	}
+
+	// It is gone.
+	f.settle(2, 1)
+	f.reconcile()
+	if got := f.replicas(); got != "1,2" {
+		t.Errorf("replicas = %s, want 1,2 once the drained router is gone", got)
+	}
+}
+
 func TestReplacementHashChangeReplaces(t *testing.T) {
 	f := newFixture(t, 2, "h1")
 	f.reconcile()

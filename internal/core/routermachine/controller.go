@@ -21,6 +21,7 @@ import (
 	corev1alpha1 "github.com/hauke-cloud/router-api/api/core/v1alpha1"
 	"github.com/hauke-cloud/router-api/internal/conditions"
 	"github.com/hauke-cloud/router-api/internal/contract"
+	"github.com/hauke-cloud/router-api/internal/pace"
 )
 
 // Condition reasons set by this controller.
@@ -97,7 +98,7 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, machine *corev1alpha1.
 		conditions.False(&status.Conditions, machine.Generation, corev1alpha1.InfrastructureReadyCondition, ReasonInfrastructureNotFound, message)
 		conditions.False(&status.Conditions, machine.Generation, corev1alpha1.ReadyCondition, ReasonInfrastructureNotFound, message)
 		status.Phase = phase(machine)
-		return reconcile.Result{RequeueAfter: waitInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(waitInterval)}, nil
 	}
 
 	if err := r.adopt(ctx, machine, infra); err != nil {
@@ -133,7 +134,7 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, machine *corev1alpha1.
 		ReasonWaitingForProvider, "the infrastructure provider has not reported yet")
 	status.Phase = phase(machine)
 
-	return reconcile.Result{RequeueAfter: waitInterval}, nil
+	return reconcile.Result{RequeueAfter: pace.Every(waitInterval)}, nil
 }
 
 // adopt makes the machine the controlling owner of its infrastructure object
@@ -189,7 +190,7 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, machine *corev1alpha1.
 	if err := r.patchStatus(ctx, machine, original); err != nil {
 		return reconcile.Result{}, err
 	}
-	return reconcile.Result{RequeueAfter: waitInterval / 3}, nil
+	return reconcile.Result{RequeueAfter: pace.Every(waitInterval / 3)}, nil
 }
 
 func (r *Reconciler) patchStatus(ctx context.Context, machine, original *corev1alpha1.RouterMachine) error {

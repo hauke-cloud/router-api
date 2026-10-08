@@ -7,6 +7,7 @@
 package vyostest
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -16,7 +17,10 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
+	"log"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -55,6 +59,8 @@ type Router struct {
 	hasPending  bool
 	previous    []command.Path
 	failNext    map[string]int
+	vrrpSet     bool
+	stop        func()
 	version     string
 	vrrp        string
 	rejectPaths []command.Path
@@ -62,31 +68,75 @@ type Router struct {
 	configures  int
 }
 
+// Options configure a fake router. The zero value is a router with an empty
+// configuration, generated credentials and a port of its own on 127.0.0.1.
+type Options struct {
+	// Config is the running configuration to start with.
+	Config string
+	// ListenAddress is host:port to listen on.
+	ListenAddress string
+	// Key is the API key to accept.
+	Key string
+	// CertPEM and KeyPEM are the certificate to present.
+	CertPEM, KeyPEM []byte
+}
+
 // New starts a fake router with the given running configuration. It is shut
 // down when the test ends.
 func New(t *testing.T, config string) *Router {
 	t.Helper()
-	paths, err := command.Parse(config)
+	return Start(t, &Options{Config: config})
+}
+
+// Start starts a fake router. It is shut down when the test ends, or by Stop.
+func Start(t *testing.T, opts *Options) *Router {
+	t.Helper()
+	paths, err := command.Parse(opts.Config)
 	if err != nil {
 		t.Fatalf("vyostest: %v", err)
 	}
-	cert, certPEM, keyPEM := selfSigned(t)
 
 	r := &Router{
-		Key:     "test-key",
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
+		Key:     opts.Key,
+		CertPEM: opts.CertPEM,
+		KeyPEM:  opts.KeyPEM,
 		running: paths,
 		saved:   slices.Clone(paths),
 		version: "2026.10.07-0712-rolling",
-		vrrp:    "VRRP data is not available (process not running or no active groups)\n",
 	}
+	if r.Key == "" {
+		r.Key = "test-key"
+	}
+	var cert tls.Certificate
+	if len(r.CertPEM) == 0 {
+		cert, r.CertPEM, r.KeyPEM = selfSigned(t)
+	} else if cert, err = tls.X509KeyPair(r.CertPEM, r.KeyPEM); err != nil {
+		t.Fatalf("vyostest: certificate: %v", err)
+	}
+
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(r.serve))
+	if opts.ListenAddress != "" {
+		listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", opts.ListenAddress)
+		if err != nil {
+			t.Fatalf("vyostest: listen on %s: %v", opts.ListenAddress, err)
+		}
+		_ = srv.Listener.Close()
+		srv.Listener = listener
+	}
 	srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+	// Clients that are cut off when a router is stopped are part of some
+	// tests, and not worth a line on stderr each.
+	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
 	srv.StartTLS()
-	t.Cleanup(srv.Close)
+	r.stop = sync.OnceFunc(srv.Close)
+	t.Cleanup(r.stop)
 	r.URL = srv.URL
 	return r
+}
+
+// Stop makes the router stop answering, like a server that went down.
+func (r *Router) Stop() {
+	r.stop()
 }
 
 // Running returns the active configuration as "set" lines, sorted.
@@ -175,7 +225,39 @@ func (r *Router) Port() int32 {
 func (r *Router) SetVRRP(output string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.vrrp = output
+	r.vrrp, r.vrrpSet = output, true
+}
+
+// noVRRP is what a router prints when keepalived is not running.
+const noVRRP = "VRRP data is not available (process not running or no active groups)\n"
+
+// vrrpOutput is what "show vrrp" prints: what SetVRRP said, or else what
+// follows from the configuration. A fake router has no peers, so every group
+// it has is master, unless high availability is switched off.
+func (r *Router) vrrpOutput() string {
+	if r.vrrpSet {
+		return r.vrrp
+	}
+	disabled := false
+	var groups []string
+	for _, path := range r.running {
+		switch {
+		case slices.Equal(path, command.Path{"high-availability", "disable"}):
+			disabled = true
+		case path.HasPrefix(command.Path{"high-availability", "vrrp", "group"}) && len(path) > 3 && !slices.Contains(groups, path[3]):
+			groups = append(groups, path[3])
+		}
+	}
+	if disabled || len(groups) == 0 {
+		return noVRRP
+	}
+	var out strings.Builder
+	out.WriteString("Name  Interface  VRID  State   Priority  Last Transition\n")
+	out.WriteString("----  ---------  ----  ------  --------  ---------------\n")
+	for _, group := range groups {
+		fmt.Fprintf(&out, "%s  eth1  10  MASTER  100  5s\n", group)
+	}
+	return out.String()
 }
 
 // Requests returns "METHOD path op" of every request received.
@@ -255,7 +337,7 @@ func (r *Router) show(w http.ResponseWriter, body *request) {
 		}
 		reply(w, http.StatusOK, out.String(), "")
 	case "vrrp":
-		reply(w, http.StatusOK, sudoNoise+r.vrrp, "")
+		reply(w, http.StatusOK, sudoNoise+r.vrrpOutput(), "")
 	default:
 		reply(w, http.StatusBadRequest, nil, "unknown show command")
 	}
