@@ -78,6 +78,18 @@ set system host-name edge
 			keep:    []Path{{"system", "login"}},
 			wantSet: []string{"set system login user admin authentication encrypted-password y"},
 		},
+		// VyOS writes the MAC address of every interface into its own
+		// configuration. Nobody lists those, and they must stay.
+		"kept paths may contain wildcards": {
+			current: `set interfaces ethernet eth0 hw-id 96:00:00:00:00:01
+set interfaces ethernet eth0 address dhcp
+set interfaces ethernet eth1 hw-id 96:00:00:00:00:02
+set interfaces ethernet eth1 description old
+`,
+			desired:    "set interfaces ethernet eth0 address dhcp\n",
+			keep:       []Path{{"interfaces", "ethernet", Wildcard, "hw-id"}},
+			wantDelete: []string{"delete interfaces ethernet eth1 description"},
+		},
 		"a valueless node that gains children is not deleted": {
 			current: "set interfaces loopback lo\n",
 			desired: "set interfaces loopback lo address 192.0.2.1/32\n",

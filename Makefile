@@ -135,3 +135,12 @@ image: ## Build the container image for the host platform
 	  --build-arg COMMIT=$(COMMIT) \
 	  --build-arg DATE=$(DATE) \
 	  -t $(IMAGE):$(IMAGE_TAG) .
+
+##@ Tests against real software
+
+# Needs podman and the image from the OCI/vyos repository. Rootless is enough.
+VYOS_IMAGE ?= ghcr.io/hauke-cloud/vyos:dev
+
+.PHONY: test-vyos
+test-vyos: ## Run the config provider against a real VyOS container
+	VYOS_IMAGE=$(VYOS_IMAGE) go test -count=1 -timeout 15m -v ./test/vyos/

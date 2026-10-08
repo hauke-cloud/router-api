@@ -36,6 +36,12 @@ All calls made with the certificate pinned (`curl --cacert`), not `-k`.
 | `/config-file` `merge` with `string` and `confirm_time` | Works the same way. |
 | `/config-file` `save` | Writes `/config/config.boot`. Nothing else persists a change. |
 
+`commit-confirm action reload` needs `system config-management
+commit-revisions` to be set: without it VyOS rejects the commit with
+`commit-confirm reload requires non-zero commit-revisions`. It is part of the
+default configuration, so a configuration that is made to match a list
+exactly has to list it.
+
 The revert action defaults to **reboot**. In a container that stops the
 container. With `set system config-management commit-confirm action reload`
 the revert happens in place; the seed configuration sets it.
@@ -43,6 +49,32 @@ the revert happens in place; the seed configuration sets it.
 Every command output is prefixed with `sudo: unable to resolve host <name>`
 after a hostname change. It is noise in the `data` field and has to be ignored
 when parsing.
+
+## Bootstrap without touching the router
+
+A script at `/config/scripts/vyos-postconfig-bootup.script` is run by VyOS
+after it has loaded its configuration, on every boot. Placed in the config
+volume before the container first starts, it seeds the router with no access
+from outside:
+
+| Finding | Consequence |
+| --- | --- |
+| A vbash script there that does `configure`, `set ...`, `commit`, `save` brought the API up with the given key and certificate about 18 s after `podman run`. | The bootstrap data only has to put files into the config volume. Nothing has to reach into the container. |
+| Statements after the script's `exit` (which leaves configuration mode) still run. | The script writes a marker file last and does nothing when it finds it, so a later change of the API key is not undone at the next boot. |
+| The seeded configuration is in `config.boot` and the API answers again after a container restart. | |
+| `set system login user vyos authentication encrypted-password '!'` commits and leaves the account without a usable password. Deleting the last user, and all of `system login`, also commits. | The seed locks the default account; a configuration without any login is possible. |
+
+## VRRP
+
+On a dummy interface, so this says nothing about two routers seeing each other:
+
+- A unicast group comes up and `show vrrp` prints one row per group:
+  `Name Interface VRID State Priority Last Transition`, state `MASTER`.
+- On becoming master VyOS ran the transition script:
+  `keepalived-fifo.py: Running the command: /usr/local/bin/hcloud-vrrp-failover wan`.
+- `set high-availability disable` stops keepalived; `show vrrp` then prints
+  `VRRP data is not available (...)`. That is what a drain uses: a stopping
+  keepalived announces priority 0 and a peer takes over at once.
 
 ## Features exercised
 
