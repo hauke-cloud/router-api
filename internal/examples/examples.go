@@ -90,7 +90,13 @@ func SampleData(spec *configv1alpha1.VyOSConfigSpec) *render.Data {
 	}
 }
 
-// Commands renders the configuration of an example's VyOSConfigTemplate.
+// Commands renders the configuration of an example's VyOSConfigTemplate with
+// SampleData.
 func Commands(spec *configv1alpha1.VyOSConfigSpec) ([]command.Path, error) {
 	return render.Commands(spec.Commands, SampleData(spec))
+}
+
+// CommandsWith renders it with the given data.
+func CommandsWith(spec *configv1alpha1.VyOSConfigSpec, data *render.Data) ([]command.Path, error) {
+	return render.Commands(spec.Commands, data)
 }

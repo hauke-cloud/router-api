@@ -49,20 +49,20 @@ with AS numbers of its own.
 
 ## Status of this example
 
-Read this before relying on it.
+- The manifests are submitted to a real API server and rendered by
+  `internal/examples/examples_test.go`.
+- The VyOS configuration in `config.yaml` was committed in full, firewall, NAT
+  and WireGuard included, on two Hetzner Cloud servers that were booted from the
+  operator's user data (`TestHomeLabExampleOnAServer`). The two elected one
+  master over the private network, and a hard power-off of the master moved the
+  Floating IP and the alias IP to the other within six seconds.
+- **Not tested: the tunnel and BGP with a peer on the other end.** No lab
+  router was connected. The WireGuard interface and the BGP session are
+  configured and come up; that traffic flows through them as described is how
+  it is designed, not something that was observed.
 
-- The **operator's part** is exercised by tests: the manifests in this
-  directory are loaded and rendered by `internal/examples/examples_test.go`, and the
-  lifecycle they describe is what the system test runs.
-- The **VyOS configuration** in `config.yaml` has been checked against a real
-  VyOS container for syntax, and the VRRP, BGP and monitoring parts were
-  committed there. The firewall, NAT and WireGuard parts could only be
-  validated, not committed (a rootless container may not touch those parts of
-  the kernel).
-- **Nothing here has run on Hetzner yet.** In particular the hand-over of the
-  server's network interfaces to VyOS at first boot is unverified.
-  [docs/spike-vyos-container.md](../../docs/spike-vyos-container.md) lists
-  what is and is not established.
+[docs/spike-vyos-container.md](../../docs/spike-vyos-container.md) has the
+details.
 
 ## Apply
 

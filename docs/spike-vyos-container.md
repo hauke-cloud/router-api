@@ -82,28 +82,32 @@ On a dummy interface, so this says nothing about two routers seeing each other:
 - Metrics: `service monitoring prometheus node-exporter` serves on 9100.
 - WireGuard key generation through `/generate`.
 
-## Limits of this spike
+## On Hetzner Cloud
 
-Rootless podman cannot write non-namespaced sysctls or load kernel modules, so
-on the workstation:
+Run on 2026-10-08 with `cx23` servers in `fsn1`, Ubuntu 24.04.4 (kernel
+6.8.0-138), podman 4.9.3, created from a snapshot that had the VyOS image
+loaded and booted with the user data `go run ./hack/userdata` prints, which is
+what the operator generates.
 
-- any `firewall` commit fails (`sysctl -f` is denied),
-- `interfaces wireguard` fails (`Loading Kernel module wireguard failed`; the
-  module is not loaded on the workstation either),
-- `system option` fails at boot (`/proc/sys/kernel/panic`), which leaves
-  `/tmp/vyos-config-status` at 1 and systemd `degraded`,
-- the only NIC is pasta's copy of the host interface (`enp4s0`), which VyOS
-  does not treat as an `ethN` interface.
+| Finding | Consequence |
+| --- | --- |
+| Stock Ubuntu names the public interface `eth0` and the private one `enp7s0`, both configured by netplan through systemd-networkd, with the names pinned by MAC address in the netplan file. | The host set-up script names the interfaces by MAC with `.link` files, removes the netplan configuration, disables cloud-init's network configuration and stops systemd-networkd. |
+| With that, VyOS in a privileged host-network container took over both interfaces: `eth0` and `eth1` got their addresses from VyOS's DHCP client. The REST API answered on the public address, with the generated certificate, **38 s after the server was created**; a second server took about 25 s. SSH to the host kept working. | The bootstrap works as designed. |
+| A unit generated from a quadlet file cannot be enabled (`Unit ... is transient or generated`), only started; it takes its place in the boot from the file's `[Install]` section. The first attempt failed on this after the interfaces had been handed over, and the server had to be read through the rescue system. | The script starts the unit, and if anything fails after the hand-over it gives the host a DHCP configuration back, so that a failed bootstrap can be logged in to. |
+| An unqualified `FROM golang:...` does not resolve under Ubuntu's podman, which has no search registries configured. | Both Dockerfiles name their base images in full. |
+| Firewall, NAT, WireGuard, BGP and VRRP of `examples/home-lab` committed, and a second apply found nothing to change. `wg0` came up: the module is loaded from the host's `/lib/modules` by the privileged container. | What a rootless container could only validate is committed for real. |
+| VyOS's DHCP client takes the private address, a /32, **but not the classless routes Hetzner sends with it**. Ubuntu had `10.0.0.0/16 via 10.0.0.1` and `10.0.0.1 dev enp7s0`; VyOS had neither, the routers could not reach each other, and both became VRRP master. | The configuration has to carry the two routes. The example does. |
+| With the routes, unicast VRRP over the private network works: one master, one backup, advertisements visible on the wire. | |
+| On becoming master a router ran `hcloud-vrrp-failover`, and Hetzner showed the Floating IP and the alias IP assigned to it. | The on-box failover works without the operator. |
+| **Failover: the master was powered off hard while its Floating IP was pinged five times a second. The address was unreachable for 6.0 s.** The backup became master about 4 s after the power-off was issued, moved both addresses, and answered. | |
+| Hetzner's API specification limits user data to 32 KiB; the user data for the example is 8.3 KB. | |
 
-None of these say anything about a rootful, host-network container on a real
-server. Still to be shown there, before the bootstrap half of the config
-provider is written against it:
+A router's firewall is the host's: VyOS runs in the host's network namespace.
+A rule set with a default of drop on input also closes SSH to the host unless
+it says otherwise.
 
-1. VyOS taking over the NICs of an Ubuntu 24.04 Hetzner server: who configures
-   `eth0` when netplan and VyOS both want to, how the public and the private NIC
-   end up named, and whether the operator can still reach the API afterwards.
-2. `firewall`, `nat` and `interfaces wireguard` committing, with the kernel
-   modules coming from the host through `/lib/modules`.
-3. Unicast VRRP between two servers over the private network, and the
-   transition script moving a Floating IP.
-4. The size of the bootstrap user data against Hetzner's limit.
+## Not established
+
+- Traffic through the WireGuard tunnel, and BGP with a peer: no lab router was
+  connected in any test.
+- IPv6. The servers had IPv6 addresses; nothing was done with them.
