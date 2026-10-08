@@ -1,0 +1,13 @@
+# Any change here replaces the routers, one at a time.
+apiVersion: infrastructure.router.hauke.cloud/v1alpha1
+kind: HetznerMachineTemplate
+metadata:
+  name: edge
+spec:
+  template:
+    spec:
+      networkRef:
+        name: edge
+      serverType: cx23
+      location: fsn1
+      image: ubuntu-24.04

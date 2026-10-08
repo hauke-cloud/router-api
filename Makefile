@@ -15,8 +15,9 @@ DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 PKG     := github.com/hauke-cloud/router-api/internal/version
 LDFLAGS := -w -s -X $(PKG).version=$(VERSION) -X $(PKG).commit=$(COMMIT) -X $(PKG).date=$(DATE)
 
-# Container engine. podman and docker are interchangeable here.
-CONTAINER_ENGINE ?= $(shell command -v docker 2>/dev/null || command -v podman 2>/dev/null)
+# Container engine. podman and docker are interchangeable here; docker only
+# counts if its daemon answers, a docker CLI without one is common.
+CONTAINER_ENGINE ?= $(shell docker info >/dev/null 2>&1 && echo docker || command -v podman 2>/dev/null)
 
 # Pinned so that a local run and a CI run report the same findings.
 GOLANGCI_LINT_VERSION ?= v2.14.0
@@ -91,7 +92,7 @@ lint: ## Run golangci-lint
 	$(GOLANGCI_LINT) run
 
 .PHONY: ci-lint
-ci-lint: fmt-check vet lint generate-check ## Every lint CI runs, in one target
+ci-lint: fmt-check vet lint generate-check helm-lint tag-guard ## Every lint CI runs, in one target
 
 .PHONY: tidy
 tidy: ## Tidy and verify go.mod
@@ -135,6 +136,31 @@ image: ## Build the container image for the host platform
 	  --build-arg COMMIT=$(COMMIT) \
 	  --build-arg DATE=$(DATE) \
 	  -t $(IMAGE):$(IMAGE_TAG) .
+
+##@ Helm chart
+
+# The shared CI action packages the chart but never lints or renders it, so a
+# broken template would otherwise only surface at install time.
+.PHONY: helm-lint
+helm-lint: ## Lint the chart and render it with every option exercised
+	helm lint $(CHART_DIR)
+	helm template router-api $(CHART_DIR) --namespace router-api > /dev/null
+	helm template router-api $(CHART_DIR) --namespace router-api \
+	  --set metrics.serviceMonitor.enabled=true \
+	  --set watchNamespace=routers \
+	  --set crds.install=false \
+	  --set managers.config-vyos.enabled=false \
+	  --set 'managers.core.extraArgs[0]=-log-level=debug' > /dev/null
+
+# CI rewrites every "tag:" line in values.yaml to the release version.
+.PHONY: tag-guard
+tag-guard: ## Fail unless values.yaml has exactly one "tag:" line
+	@count="$$(grep -c 'tag:' $(CHART_DIR)/values.yaml)"; \
+	  [ "$$count" -eq 1 ] || { echo "values.yaml must contain exactly one 'tag:' line, found $$count" >&2; exit 1; }
+
+.PHONY: helm-install
+helm-install: ## Install the chart into the current cluster
+	helm upgrade --install router-api $(CHART_DIR) --namespace router-api --create-namespace
 
 ##@ Tests against real software
 

@@ -1,0 +1,25 @@
+apiVersion: v2
+name: router-api
+description: Cluster API style management of routers - VyOS on Hetzner Cloud - with rolling updates, in-place configuration and self-healing.
+type: application
+# version is managed by CI. This is only a sensible default for local packaging.
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - router
+  - vyos
+  - hetzner
+  - operator
+  - vrrp
+  - wireguard
+  - homelab
+home: https://github.com/hauke-cloud/router-api
+sources:
+  - https://github.com/hauke-cloud/router-api
+maintainers:
+  - name: Hauke Mettendorf
+    email: hauke@mettendorf.it
+annotations:
+  artifacthub.io/license: GPL-3.0-only
+  artifacthub.io/prerelease: "true"
+  artifacthub.io/operator: "true"

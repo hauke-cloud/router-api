@@ -1,0 +1,32 @@
+apiVersion: infrastructure.router.hauke.cloud/v1alpha1
+kind: HetznerRouterNetwork
+metadata:
+  name: edge
+spec:
+  tokenSecretRef:
+    name: hcloud
+  # An existing Hetzner Cloud Network. It is neither created nor deleted here.
+  network:
+    name: lab
+  firewall:
+    # The operator runs in the lab, whose address changes every night. The
+    # name is resolved once a minute and the firewall follows it.
+    managementSources:
+      - hostname: lab.example.net
+    rules:
+      - description: WireGuard, dialled by the lab
+        protocol: udp
+        port: "51820"
+      - description: ping
+        protocol: icmp
+      # Everything for the lab's public addresses. What is actually reachable
+      # is decided in the lab, where the services are.
+      - description: lab services
+        protocol: tcp
+        port: any
+      - description: lab services
+        protocol: udp
+        port: any
+  # For debugging on the host. The operator itself never uses SSH.
+  sshKeys:
+    - yubikey

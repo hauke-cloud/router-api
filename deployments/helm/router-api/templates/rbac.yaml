@@ -1,0 +1,132 @@
+{{- if .Values.rbac.create }}
+{{- range $manager, $config := .Values.managers }}
+{{- if $config.enabled }}
+{{- $ctx := dict "root" $ "manager" $manager }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "router-api.managerName" $ctx }}
+  labels:
+    {{- include "router-api.labels" $ctx | nindent 4 }}
+{{- if eq $manager "core" }}
+# Core reads and writes provider objects through the provider contract, but
+# does not know which providers exist. Each provider ships a ClusterRole with
+# this label that grants core access to its API group.
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        router.hauke.cloud/aggregate-to-core: "true"
+rules: []
+{{- else }}
+rules:
+  {{- include "router-api.commonRules" $ | nindent 2 }}
+  {{- if eq $manager "infrastructure-hetzner" }}
+  - apiGroups: ["infrastructure.router.hauke.cloud"]
+    resources: ["*"]
+    verbs: ["*"]
+  # The machine this provider builds a server for, and where its user data is.
+  - apiGroups: ["router.hauke.cloud"]
+    resources: ["routermachines"]
+    verbs: ["get", "list", "watch"]
+  # The Hetzner API token and the bootstrap data.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+  {{- else if eq $manager "config-vyos" }}
+  - apiGroups: ["config.router.hauke.cloud"]
+    resources: ["*"]
+    verbs: ["*"]
+  # The router a config belongs to, its addresses and its peers.
+  - apiGroups: ["router.hauke.cloud"]
+    resources: ["routers"]
+    verbs: ["get", "list", "watch"]
+  # Reads template values; creates each router's credentials and bootstrap data.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get"]
+  {{- end }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "router-api.managerName" $ctx }}
+  labels:
+    {{- include "router-api.labels" $ctx | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "router-api.managerName" $ctx }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "router-api.managerName" $ctx }}
+    namespace: {{ $.Release.Namespace }}
+---
+# Leader election happens in the release namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "router-api.managerName" $ctx }}-leader-election
+  labels:
+    {{- include "router-api.labels" $ctx | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "router-api.managerName" $ctx }}-leader-election
+  labels:
+    {{- include "router-api.labels" $ctx | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "router-api.managerName" $ctx }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "router-api.managerName" $ctx }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}
+{{- if .Values.managers.core.enabled }}
+{{- $core := dict "root" $ "manager" "core" }}
+---
+# What core needs by itself.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "router-api.managerName" $core }}-own
+  labels:
+    {{- include "router-api.labels" $core | nindent 4 }}
+    router.hauke.cloud/aggregate-to-core: "true"
+rules:
+  {{- include "router-api.commonRules" $ | nindent 2 }}
+  - apiGroups: ["router.hauke.cloud"]
+    resources: ["*"]
+    verbs: ["*"]
+{{- end }}
+{{- range $manager, $group := dict "infrastructure-hetzner" "infrastructure.router.hauke.cloud" "config-vyos" "config.router.hauke.cloud" }}
+{{- if (index $.Values.managers $manager).enabled }}
+{{- $ctx := dict "root" $ "manager" $manager }}
+---
+# Lets core read and write this provider's objects.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "router-api.managerName" $ctx }}-aggregate-to-core
+  labels:
+    {{- include "router-api.labels" $ctx | nindent 4 }}
+    router.hauke.cloud/aggregate-to-core: "true"
+rules:
+  - apiGroups: [{{ $group | quote }}]
+    resources: ["*"]
+    verbs: ["*"]
+{{- end }}
+{{- end }}
+{{- end }}

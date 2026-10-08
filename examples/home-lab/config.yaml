@@ -1,0 +1,155 @@
+apiVersion: config.router.hauke.cloud/v1alpha1
+kind: VyOSConfigTemplate
+metadata:
+  name: edge
+spec:
+  template:
+    spec:
+      # Pin by digest. A change replaces the routers.
+      image: ghcr.io/hauke-cloud/vyos:latest
+
+      values:
+        - name: wireguardPrivateKey
+          secretKeyRef: {name: edge-wireguard, key: privateKey}
+        - name: labPublicKey
+          value: REPLACE_WITH_THE_LAB_ROUTERS_WIREGUARD_PUBLIC_KEY=
+        - name: hcloudToken
+          secretKeyRef: {name: hcloud, key: token}
+        # The Floating IP the lab dials.
+        - name: vpnAddress
+          value: 203.0.113.10
+        # A private address that follows the active router (a Hetzner alias IP).
+        - name: privateVIP
+          value: 10.0.1.100
+        # The lab's public addresses, routed through the tunnel.
+        - name: servicePrefix
+          value: 203.0.113.16/29
+        - name: labNetworks
+          value: 192.168.10.0/24
+        - name: localAS
+          value: "65001"
+        - name: labAS
+          value: "65002"
+        - name: syslogServer
+          value: 192.168.10.5
+
+      # Placed below /config when a router is created. A change replaces the
+      # routers. These two are what hcloud-vrrp-failover reads when a router
+      # becomes VRRP master.
+      files:
+        - path: /config/hetzner/token
+          permissions: "0600"
+          value: "{{ .Values.hcloudToken }}"
+        - path: /config/hetzner/failover.json
+          permissions: "0644"
+          value: |
+            {
+              "tokenFile": "/config/hetzner/token",
+              "groups": {
+                "wan": {
+                  "floatingIPs": ["{{ .Values.vpnAddress }}", "203.0.113.16"],
+                  "aliasIPs": ["{{ .Values.privateVIP }}"]
+                }
+              }
+            }
+
+      # The router's configuration. It is applied to the running routers, the
+      # standby first, with commit-confirm: a change that cuts the operator
+      # off undoes itself.
+      #
+      # What is not listed here is removed from the router, apart from what
+      # the operator itself needs (its API access, and DHCP on the two host
+      # interfaces unless they are given addresses here).
+      commands: |
+        set system host-name {{ .Router.Name }}
+        set system time-zone Europe/Berlin
+        set system name-server 1.1.1.1
+
+        # --- high availability ---------------------------------------------
+        # Unicast, over the private network: Hetzner carries no multicast.
+        set high-availability vrrp group wan vrid 10
+        set high-availability vrrp group wan interface {{ .Host.PrivateInterface }}
+        set high-availability vrrp group wan address {{ .Values.privateVIP }}/32
+        set high-availability vrrp group wan no-preempt
+        set high-availability vrrp group wan hello-source-address {{ required "the router has no private address" .Machine.InternalIP }}
+        {{- range .Peers }}
+        set high-availability vrrp group wan peer-address {{ .InternalIP }}
+        {{- end }}
+        # Moves the Floating IPs and the alias IP to this router.
+        set high-availability vrrp group wan transition-script master '/usr/local/bin/hcloud-vrrp-failover wan'
+
+        # --- the tunnel to the lab -----------------------------------------
+        # The VPN address lives on both routers; only the one the Floating IP
+        # is assigned to is sent any traffic for it.
+        set interfaces dummy dum0 address {{ .Values.vpnAddress }}/32
+        set interfaces wireguard wg0 address 10.99.0.1/30
+        set interfaces wireguard wg0 port 51820
+        set interfaces wireguard wg0 private-key {{ .Values.wireguardPrivateKey }}
+        # No endpoint: the lab dials in, from wherever it currently is.
+        set interfaces wireguard wg0 peer lab public-key {{ .Values.labPublicKey }}
+        set interfaces wireguard wg0 peer lab allowed-ips 10.99.0.2/32
+        set interfaces wireguard wg0 peer lab allowed-ips {{ .Values.servicePrefix }}
+        set interfaces wireguard wg0 peer lab allowed-ips {{ .Values.labNetworks }}
+
+        # --- routing ---------------------------------------------------------
+        # The lab announces which of its public addresses are in use.
+        set protocols bgp system-as {{ .Values.localAS }}
+        set protocols bgp parameters router-id 10.99.0.1
+        set protocols bgp neighbor 10.99.0.2 remote-as {{ .Values.labAS }}
+        set protocols bgp neighbor 10.99.0.2 description lab
+        set protocols bgp neighbor 10.99.0.2 address-family ipv4-unicast prefix-list import LAB-IN
+        set policy prefix-list LAB-IN rule 10 action permit
+        set policy prefix-list LAB-IN rule 10 prefix {{ .Values.servicePrefix }}
+        set policy prefix-list LAB-IN rule 10 le 32
+        set protocols static route {{ .Values.labNetworks }} interface wg0
+
+        # --- NAT -------------------------------------------------------------
+        # The lab's private networks leave with the router's own address.
+        # Traffic for the public service addresses is routed untouched.
+        set nat source rule 100 description 'lab egress'
+        set nat source rule 100 outbound-interface name {{ .Host.PublicInterface }}
+        set nat source rule 100 source address {{ .Values.labNetworks }}
+        set nat source rule 100 translation address masquerade
+
+        # --- firewall --------------------------------------------------------
+        # To the router itself. The Hetzner firewall in front already limits
+        # the management port to the lab.
+        set firewall ipv4 input filter default-action drop
+        set firewall ipv4 input filter rule 10 action accept
+        set firewall ipv4 input filter rule 10 state established
+        set firewall ipv4 input filter rule 10 state related
+        set firewall ipv4 input filter rule 20 action accept
+        set firewall ipv4 input filter rule 20 protocol icmp
+        set firewall ipv4 input filter rule 30 action accept
+        set firewall ipv4 input filter rule 30 description 'operator'
+        set firewall ipv4 input filter rule 30 protocol tcp
+        set firewall ipv4 input filter rule 30 destination port 443
+        set firewall ipv4 input filter rule 40 action accept
+        set firewall ipv4 input filter rule 40 description 'wireguard'
+        set firewall ipv4 input filter rule 40 protocol udp
+        set firewall ipv4 input filter rule 40 destination port 51820
+        set firewall ipv4 input filter rule 50 action accept
+        set firewall ipv4 input filter rule 50 description 'vrrp'
+        set firewall ipv4 input filter rule 50 protocol vrrp
+        set firewall ipv4 input filter rule 50 inbound-interface name {{ .Host.PrivateInterface }}
+        set firewall ipv4 input filter rule 60 action accept
+        set firewall ipv4 input filter rule 60 description 'everything from the lab'
+        set firewall ipv4 input filter rule 60 inbound-interface name wg0
+        # Through the router: to the lab's public addresses, and whatever the
+        # lab sends.
+        set firewall ipv4 forward filter default-action drop
+        set firewall ipv4 forward filter rule 10 action accept
+        set firewall ipv4 forward filter rule 10 state established
+        set firewall ipv4 forward filter rule 10 state related
+        set firewall ipv4 forward filter rule 20 action accept
+        set firewall ipv4 forward filter rule 20 destination address {{ .Values.servicePrefix }}
+        set firewall ipv4 forward filter rule 30 action accept
+        set firewall ipv4 forward filter rule 30 inbound-interface name wg0
+
+        # --- observability ---------------------------------------------------
+        # Reachable from the lab through the tunnel, which only the active
+        # router has. The operator watches both routers regardless.
+        set service monitoring prometheus node-exporter listen-address 10.99.0.1
+        set service monitoring prometheus frr-exporter listen-address 10.99.0.1
+        set system syslog remote {{ .Values.syslogServer }} facility all level info
+        set system syslog remote {{ .Values.syslogServer }} protocol udp
