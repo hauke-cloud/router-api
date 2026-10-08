@@ -26,6 +26,7 @@ import (
 	corev1alpha1 "github.com/hauke-cloud/router-api/api/core/v1alpha1"
 	"github.com/hauke-cloud/router-api/internal/conditions"
 	"github.com/hauke-cloud/router-api/internal/contract"
+	"github.com/hauke-cloud/router-api/internal/pace"
 )
 
 // Condition reasons set by this controller.
@@ -119,7 +120,7 @@ func (r *Reconciler) reconcile(ctx context.Context, deployment *corev1alpha1.Rou
 		// Nothing to roll towards yet. What exists keeps running.
 		r.summarize(deployment, sets, "")
 		conditions.False(&status.Conditions, generation, corev1alpha1.AvailableCondition, reason.reason, reason.message)
-		return reconcile.Result{RequeueAfter: waitInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(waitInterval)}, nil
 	}
 
 	current, sets, err := r.currentSet(ctx, deployment, sets, hash)
@@ -134,9 +135,9 @@ func (r *Reconciler) reconcile(ctx context.Context, deployment *corev1alpha1.Rou
 	}
 
 	if r.summarize(deployment, sets, current.Name) {
-		return reconcile.Result{RequeueAfter: waitInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(waitInterval)}, nil
 	}
-	return reconcile.Result{RequeueAfter: 4 * waitInterval}, nil
+	return reconcile.Result{RequeueAfter: pace.Every(4 * waitInterval)}, nil
 }
 
 // sets lists the RouterSets of the deployment, oldest revision first.
@@ -289,19 +290,26 @@ func (r *Reconciler) roll(ctx context.Context, deployment *corev1alpha1.RouterDe
 	want := ptr.Deref(deployment.Spec.Replicas, 1)
 	surge, unavailable := bounds(deployment, want)
 
-	var total, oldTotal int32
+	// total is what has been asked for. existing is what is there: a set
+	// that was scaled down still has its routers until they have handed
+	// over and been deleted, which takes as long as a drain takes.
+	var total, oldTotal, existing int32
 	for _, set := range sets {
-		total += ptr.Deref(set.Spec.Replicas, 0)
+		replicas := ptr.Deref(set.Spec.Replicas, 0)
+		total += replicas
+		existing += max(replicas, set.Status.Replicas)
 		if set != current {
-			oldTotal += ptr.Deref(set.Spec.Replicas, 0)
+			oldTotal += replicas
 		}
 	}
 	currentReplicas := ptr.Deref(current.Spec.Replicas, 0)
 
-	// Up.
+	// Up, as far as the surge allows. This counts routers that exist: one
+	// that is still draining occupies its place until it is gone, or the
+	// group would grow past maxSurge for the length of every drain.
 	switch {
 	case currentReplicas < want:
-		if room := want + surge - total; room > 0 {
+		if room := want + surge - existing; room > 0 {
 			scaled := min(want, currentReplicas+room)
 			if err := r.scale(ctx, current, scaled); err != nil {
 				return err
@@ -314,8 +322,10 @@ func (r *Reconciler) roll(ctx context.Context, deployment *corev1alpha1.RouterDe
 		return r.scale(ctx, current, want)
 	}
 
-	// Down. A router of the current set that is not available yet does not
-	// carry traffic, so it does not count towards what can be spared.
+	// Down. This counts what has been asked for: a router already told to
+	// go must not be counted as one that can still be spared. And a router
+	// of the current set that is not available yet does not carry traffic,
+	// so it does not count either.
 	currentUnavailable := max(0, currentReplicas-current.Status.AvailableReplicas)
 	spare := total - (want - unavailable) - currentUnavailable
 	for _, set := range sets {

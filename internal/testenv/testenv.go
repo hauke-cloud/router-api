@@ -19,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
@@ -51,6 +52,12 @@ func Scheme() *runtime.Scheme {
 // Without KUBEBUILDER_ASSETS (set by `make test`) the tests are skipped
 // rather than failed, so that a plain `go test ./...` still works.
 func Run(m *testing.M, use func(client.Client)) int {
+	return RunWithConfig(m, func(_ *rest.Config, c client.Client) { use(c) })
+}
+
+// RunWithConfig is Run for tests that start managers of their own and need
+// to tell them where the control plane is.
+func RunWithConfig(m *testing.M, use func(*rest.Config, client.Client)) int {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		fmt.Println("KUBEBUILDER_ASSETS is not set, skipping integration tests; run `make test`")
 		return 0
@@ -83,7 +90,7 @@ func Run(m *testing.M, use func(client.Client)) int {
 		}
 	}
 
-	use(k8s)
+	use(cfg, k8s)
 	return m.Run()
 }
 

@@ -13,10 +13,12 @@ import (
 	"strings"
 
 	"github.com/go-logr/logr"
+	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -133,6 +135,16 @@ func Run(ctx context.Context, def *Definition, args []string) error {
 	logger := newLogger(cfg, os.Stdout)
 	slog.SetDefault(logger)
 	ctrl.SetLogger(logr.FromSlogHandler(logger.Handler()))
+
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		return fmt.Errorf("load kubernetes configuration: %w", err)
+	}
+	return Start(ctx, def, cfg, restConfig, logger)
+}
+
+// Start runs a manager against the given cluster until ctx is cancelled.
+func Start(ctx context.Context, def *Definition, cfg *Config, restConfig *rest.Config, logger *slog.Logger) error {
 	logger.Info("starting "+def.Name,
 		"version", version.Version(), "commit", version.Commit(),
 		"namespace", cfg.Namespace, "leader_election", cfg.LeaderElection, "install_crds", cfg.InstallCRDs)
@@ -140,10 +152,6 @@ func Run(ctx context.Context, def *Definition, args []string) error {
 	scheme, err := Scheme(def)
 	if err != nil {
 		return err
-	}
-	restConfig, err := ctrl.GetConfig()
-	if err != nil {
-		return fmt.Errorf("load kubernetes configuration: %w", err)
 	}
 
 	if cfg.InstallCRDs {
@@ -184,14 +192,19 @@ func Run(ctx context.Context, def *Definition, args []string) error {
 		return fmt.Errorf("build manager: %w", err)
 	}
 
-	if err := ctrlmetrics.Registry.Register(version.Collector()); err != nil {
+	// The registry is the process's. More than one manager in a process,
+	// as in the system test, share the metric.
+	var registered prometheus.AlreadyRegisteredError
+	if err := ctrlmetrics.Registry.Register(version.Collector()); err != nil && !errors.As(err, &registered) {
 		return fmt.Errorf("register build info metric: %w", err)
 	}
-	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
-		return fmt.Errorf("register health check: %w", err)
-	}
-	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
-		return fmt.Errorf("register readiness check: %w", err)
+	if cfg.ProbeAddress != "0" {
+		if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
+			return fmt.Errorf("register health check: %w", err)
+		}
+		if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+			return fmt.Errorf("register readiness check: %w", err)
+		}
 	}
 	if err := def.Setup(mgr); err != nil {
 		return fmt.Errorf("register controllers: %w", err)
