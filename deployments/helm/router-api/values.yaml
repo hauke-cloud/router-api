@@ -9,7 +9,9 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
-# Restrict every manager to one namespace. Empty watches all namespaces.
+# Restrict every manager to one namespace, which has to exist. The managers
+# then also only have permissions in that namespace, apart from installing
+# CustomResourceDefinitions. Empty watches all namespaces.
 watchNamespace: ""
 
 # Each manager applies the CustomResourceDefinitions of its API group when it

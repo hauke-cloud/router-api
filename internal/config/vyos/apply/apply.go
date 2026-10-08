@@ -107,6 +107,25 @@ func Apply(ctx context.Context, router Router, desired, keep []command.Path, con
 	return Outcome{Changed: true, RunningHash: command.Hash(after)}, nil
 }
 
+// Settle makes sure nothing is left open on a router that already runs the
+// wanted configuration: a commit still waiting for its confirmation is
+// confirmed, and the configuration is saved.
+//
+// A router gets into that state when a change was committed and the
+// confirmation did not get through, or when the operator stopped between the
+// two. It then runs the new configuration with its revert timer armed and
+// nothing on disk. Reading the configuration shows no difference, and without
+// this the router would undo a change that everything reports as applied.
+func Settle(ctx context.Context, router Router) error {
+	if err := router.Confirm(ctx); err != nil && !errors.Is(err, client.ErrNothingToConfirm) {
+		return fmt.Errorf("%w: %w", ErrUnconfirmed, err)
+	}
+	if err := router.Save(ctx); err != nil {
+		return fmt.Errorf("save the configuration: %w", err)
+	}
+	return nil
+}
+
 // rollback puts the configuration from before a failed commit back. It runs
 // without a revert timer: there is nothing sensible to revert to from here.
 func rollback(ctx context.Context, router Router, before []command.Path) error {
