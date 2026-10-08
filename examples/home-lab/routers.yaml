@@ -1,0 +1,50 @@
+apiVersion: router.hauke.cloud/v1alpha1
+kind: RouterDeployment
+metadata:
+  name: edge
+spec:
+  # Two routers, one active. With the default strategy (maxSurge 1,
+  # maxUnavailable 0) a replacement is built and proven before the router it
+  # replaces is asked to hand over.
+  replicas: 2
+  # How long a router has to stay ready before it counts. Give VRRP and BGP
+  # time to settle.
+  minReadySeconds: 60
+  selector:
+    matchLabels:
+      router: edge
+  template:
+    metadata:
+      labels:
+        router: edge
+    spec:
+      infrastructureTemplateRef:
+        apiGroup: infrastructure.router.hauke.cloud
+        kind: HetznerMachineTemplate
+        name: edge
+      configTemplateRef:
+        apiGroup: config.router.hauke.cloud
+        kind: VyOSConfigTemplate
+        name: edge
+---
+apiVersion: router.hauke.cloud/v1alpha1
+kind: RouterHealthCheck
+metadata:
+  name: edge
+spec:
+  selector:
+    matchLabels:
+      router: edge
+  unhealthyConditions:
+    - type: Ready
+      status: "False"
+      timeout: 5m
+    - type: Ready
+      status: Unknown
+      timeout: 5m
+  # The operator sits behind the lab's uplink. If both routers look broken at
+  # once, that uplink is the likelier explanation, and nothing is touched.
+  maxUnhealthy: 50%
+  remediation:
+    rebootAttempts: 1
+    rebootTimeout: 5m

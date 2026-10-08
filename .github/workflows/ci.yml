@@ -1,0 +1,66 @@
+---
+name: CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  GO_VERSION: "1.27"
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+
+    steps:
+      - name: Build, Test, and Release
+        uses: hauke-cloud/inpacken-un-af-dor-mit@v1
+        with:
+          # Language
+          language: "go"
+          language-version: ${{ env.GO_VERSION }}
+
+          # Container Build. One image with the three managers.
+          dockerfile-path: "./Dockerfile"
+          docker-context: "."
+          platforms: "linux/amd64,linux/arm64"
+
+          # Registry
+          registry: "ghcr.io"
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          image-name: ${{ github.repository }}
+          # Branch builds publish the chart as 0.0.0-dev-<sha> and point its
+          # image at that same tag, which the action's default tag set does
+          # not produce (it only emits sha-<sha>). Push it so the chart pulls.
+          additional-tags: |
+            type=raw,value=0.0.0-dev-{{sha}},enable=${{ !startsWith(github.ref, 'refs/tags/') }}
+
+          # Helm
+          enable-helm: "true"
+          helm-chart-path: "./deployments/helm"
+          helm-chart-name: "router-api"
+
+          # Testing. `make test` downloads kube-apiserver and etcd for the
+          # integration tests and runs the system test, in which all three
+          # managers run together against them.
+          run-tests: "true"
+          test-command: "make test"
+          enable-coverage: "false"
+
+          # Linting. The action splices `lint-command` verbatim into an
+          # `if [ -n "..." ]` test before running it, so anything with quotes
+          # or a `$(...)` in it breaks there. Hence a bare `make` target, which
+          # also keeps CI and a local `make ci-lint` running the same checks.
+          run-lint: "true"
+          lint-command: "make ci-lint"
+
+          # Release
+          enable-release: "true"
+          release-draft: "false"

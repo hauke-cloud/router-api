@@ -1,0 +1,9 @@
+---
+title: router-api
+description: Cluster API style management of routers - VyOS on Hetzner Cloud - with rolling updates, in-place configuration and self-healing.
+logo: ""
+docker_image_registry: "ghcr.io"
+docker_image_namespace: "hauke-cloud/router-api"
+docker_image_version: "latest"
+helm_repository: "oci://ghcr.io/hauke-cloud/charts"
+helm_chart: "router-api"
