@@ -66,6 +66,11 @@ type RouterStatus struct {
 	// +listType=atomic
 	// +optional
 	Addresses []MachineAddress `json:"addresses,omitempty"`
+	// Configured is true once the router has run a configuration of ours.
+	// It does not go back to false: a router that is waiting for a newer
+	// configuration, or rejected one, still runs the one before.
+	// +optional
+	Configured bool `json:"configured,omitempty"`
 	// Version is the software version the router reports.
 	// +optional
 	Version string `json:"version,omitempty"`
@@ -82,6 +87,13 @@ type RouterStatus struct {
 
 // Router is one router: an instance and the configuration it runs. It is the
 // object to look at to know whether a router works.
+//
+// Ready means the router is in service: its machine runs, it has been
+// configured and it is healthy. Whether it runs the latest configuration is
+// the ConfigApplied condition, which is deliberately not part of Ready. A
+// router that is applying a change, or refused one, still forwards traffic on
+// the configuration it had, and must be neither counted as down nor "repaired"
+// for it.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:categories=router-api,shortName=rt

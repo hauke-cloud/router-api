@@ -122,7 +122,8 @@ const (
 	// MachineReadyCondition mirrors the RouterMachine's Ready on a Router.
 	MachineReadyCondition = "MachineReady"
 	// ConfigAppliedCondition is True while the router runs the configuration
-	// its config object describes.
+	// its config object currently describes. It is not part of Ready, see
+	// Router.
 	ConfigAppliedCondition = "ConfigApplied"
 	// HealthyCondition is True while the config provider can reach the router
 	// and finds it working.

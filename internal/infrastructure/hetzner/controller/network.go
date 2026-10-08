@@ -20,6 +20,7 @@ import (
 	infrav1alpha1 "github.com/hauke-cloud/router-api/api/infrastructure/v1alpha1"
 	"github.com/hauke-cloud/router-api/internal/conditions"
 	"github.com/hauke-cloud/router-api/internal/infrastructure/hetzner/cloud"
+	"github.com/hauke-cloud/router-api/internal/pace"
 )
 
 // Resolver looks up the addresses of a host name.
@@ -87,7 +88,7 @@ func (r *NetworkReconciler) reconcileNormal(ctx context.Context, network *infrav
 	apiToken, tokenErr := token(ctx, r.Client, network)
 	if tokenErr != nil {
 		r.notReady(network, ReasonTokenUnavailable, tokenErr.Error())
-		return reconcile.Result{RequeueAfter: pollInterval}, nil //nolint:nilerr // reported as a condition
+		return reconcile.Result{RequeueAfter: pace.Every(pollInterval)}, nil //nolint:nilerr // reported as a condition
 	}
 	hcloud := r.Cloud(apiToken)
 
@@ -95,7 +96,7 @@ func (r *NetworkReconciler) reconcileNormal(ctx context.Context, network *infrav
 	if errors.Is(err, cloud.ErrNotFound) {
 		r.notReady(network, ReasonNetworkNotFound,
 			fmt.Sprintf("Hetzner network %q does not exist; it is not created by this provider", network.Spec.Network.Name))
-		return reconcile.Result{RequeueAfter: ResolveInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(ResolveInterval)}, nil
 	} else if err != nil {
 		r.notReady(network, ReasonCloudError, err.Error())
 		return reconcile.Result{}, err
@@ -107,7 +108,7 @@ func (r *NetworkReconciler) reconcileNormal(ctx context.Context, network *infrav
 		// A firewall without a management rule would make every router
 		// built behind it unreachable for the operator.
 		r.notReady(network, ReasonNoManagementSources, "no management source could be determined")
-		return reconcile.Result{RequeueAfter: pollInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(pollInterval)}, nil
 	}
 	status.ManagementCIDRs = make([]string, len(sources))
 	for i, source := range sources {
@@ -134,9 +135,9 @@ func (r *NetworkReconciler) reconcileNormal(ctx context.Context, network *infrav
 
 	conditions.True(&status.Conditions, network.Generation, corev1alpha1.ReadyCondition, ReasonReady, "")
 	if hasHostnames {
-		return reconcile.Result{RequeueAfter: ResolveInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(ResolveInterval)}, nil
 	}
-	return reconcile.Result{RequeueAfter: 10 * ResolveInterval}, nil
+	return reconcile.Result{RequeueAfter: pace.Every(10 * ResolveInterval)}, nil
 }
 
 // managementSources turns the configured management sources into prefixes,
@@ -247,7 +248,7 @@ func (r *NetworkReconciler) reconcileDelete(ctx context.Context, network *infrav
 	}
 	if users > 0 {
 		r.notReady(network, ReasonInUse, fmt.Sprintf("waiting for %d HetznerMachine(s) that use this network to be deleted", users))
-		return reconcile.Result{RequeueAfter: pollInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(pollInterval)}, nil
 	}
 
 	apiToken, tokenErr := token(ctx, r.Client, network)
@@ -255,14 +256,14 @@ func (r *NetworkReconciler) reconcileDelete(ctx context.Context, network *infrav
 		// Waited for rather than failed on: the Secret may simply be
 		// restored, and nothing can be cleaned up without it.
 		r.notReady(network, ReasonTokenUnavailable, "cannot delete the firewall and placement group: "+tokenErr.Error())
-		return reconcile.Result{RequeueAfter: pollInterval}, nil //nolint:nilerr // reported as a condition
+		return reconcile.Result{RequeueAfter: pace.Every(pollInterval)}, nil //nolint:nilerr // reported as a condition
 	}
 	hcloud := r.Cloud(apiToken)
 	for _, remove := range []func(context.Context, string) error{hcloud.DeleteFirewall, hcloud.DeletePlacementGroup} {
 		if err := remove(ctx, resourceName(network)); errors.Is(err, cloud.ErrInUse) {
 			// Hetzner detaches a deleted server's firewall a moment later.
 			r.notReady(network, ReasonInUse, err.Error())
-			return reconcile.Result{RequeueAfter: pollInterval}, nil
+			return reconcile.Result{RequeueAfter: pace.Every(pollInterval)}, nil
 		} else if err != nil {
 			r.notReady(network, ReasonCloudError, err.Error())
 			return reconcile.Result{}, err

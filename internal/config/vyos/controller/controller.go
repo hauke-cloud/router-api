@@ -31,6 +31,7 @@ import (
 	"github.com/hauke-cloud/router-api/internal/config/vyos/render"
 	"github.com/hauke-cloud/router-api/internal/config/vyos/vrrp"
 	"github.com/hauke-cloud/router-api/internal/contract"
+	"github.com/hauke-cloud/router-api/internal/pace"
 )
 
 // Condition reasons set by this provider.
@@ -164,7 +165,7 @@ func (r *Reconciler) reconcile(ctx context.Context, config *configv1alpha1.VyOSC
 	}
 	if owner == nil {
 		conditions.False(&status.Conditions, generation, corev1alpha1.ConfigAppliedCondition, ReasonWaitingForOwner, "not owned by a Router yet")
-		return reconcile.Result{RequeueAfter: waitInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(waitInterval)}, nil
 	}
 	for _, object := range []client.Object{config, owner} {
 		if _, paused := object.GetAnnotations()[corev1alpha1.PausedAnnotation]; paused {
@@ -190,7 +191,7 @@ func (r *Reconciler) reconcile(ctx context.Context, config *configv1alpha1.VyOSC
 				fmt.Sprintf("the router has no %s address yet", addressType(config)))
 		}
 		keepApplied(config, ReasonWaitingForAddress, "the router does not exist yet")
-		return reconcile.Result{RequeueAfter: waitInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(waitInterval)}, nil
 	}
 
 	api, err := vyosclient.New(&vyosclient.Options{
@@ -214,14 +215,14 @@ func (r *Reconciler) reconcile(ctx context.Context, config *configv1alpha1.VyOSC
 		conditions.False(&status.Conditions, generation, configv1alpha1.APIReachableCondition, ReasonUnreachable, message)
 		conditions.False(&status.Conditions, generation, corev1alpha1.HealthyCondition, ReasonUnreachable, message)
 		keepApplied(config, ReasonUnreachable, "the router cannot be reached")
-		return reconcile.Result{RequeueAfter: waitInterval}, nil
+		return reconcile.Result{RequeueAfter: pace.Every(waitInterval)}, nil
 	}
 	status.Version = info.Version
 	conditions.True(&status.Conditions, generation, configv1alpha1.APIReachableCondition, ReasonReachable, "")
 
 	r.applyConfig(ctx, config, owner, api, credentials, values, valuesErr, redact)
 	r.observe(ctx, config, api, redact)
-	return reconcile.Result{RequeueAfter: checkInterval}, nil
+	return reconcile.Result{RequeueAfter: pace.Every(checkInterval)}, nil
 }
 
 // keepApplied leaves ConfigApplied as it is if it has been determined before,
