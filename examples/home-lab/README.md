@@ -56,6 +56,9 @@ with AS numbers of its own.
   operator's user data (`TestHomeLabExampleOnAServer`). The two elected one
   master over the private network, and a hard power-off of the master moved the
   Floating IP and the alias IP to the other within six seconds.
+- The operator has run a group like this one on Hetzner end to end (`make e2e`):
+  create, reconfigure in place, replace both routers, delete, with the Floating
+  IP reachable throughout.
 - **Not tested: the tunnel and BGP with a peer on the other end.** No lab
   router was connected. The WireGuard interface and the BGP session are
   configured and come up; that traffic flows through them as described is how

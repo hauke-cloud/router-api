@@ -170,3 +170,10 @@ VYOS_IMAGE ?= ghcr.io/hauke-cloud/vyos:dev
 .PHONY: test-vyos
 test-vyos: ## Run the config provider against a real VyOS container
 	VYOS_IMAGE=$(VYOS_IMAGE) go test -count=1 -timeout 15m -v ./test/vyos/
+
+# Creates servers at Hetzner Cloud and deletes them again. See test/e2e for
+# the environment it needs.
+.PHONY: e2e
+e2e: ## Run router-api against Hetzner Cloud for real (billed resources)
+	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" \
+	  go test -count=1 -timeout 90m -v ./test/e2e/

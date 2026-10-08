@@ -70,6 +70,17 @@ health check: more than `maxUnhealthy` are unhealthy at once. That is the guard 
 operator that has lost its own connectivity rebooting a healthy fleet. Routers keep failing
 over among themselves regardless.
 
+**The Floating IP did not follow the VRRP master.** Moving it is the job of
+`hcloud-vrrp-failover`, which VyOS runs on the router that becomes master; the operator is not
+involved and does not see it fail. On the master:
+
+```sh
+podman exec vyos journalctl -b | grep -E 'hcloud-vrrp|keepalived-fifo'
+```
+
+The two causes met so far: no name server configured on the router (the helper has to resolve
+`api.hetzner.cloud`), and `/config/hetzner/failover.json` or the token file missing.
+
 **A server disappeared.** The `HetznerMachine` reports `ServerNotFound` and does not create
 another: a new server from the old user data would come up as a router the operator believes it
 has already configured. The health check replaces the router.
