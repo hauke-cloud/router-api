@@ -7,6 +7,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -30,7 +31,7 @@ func run() error {
 	flag.Parse()
 	if *image == "" || *out == "" {
 		flag.Usage()
-		return fmt.Errorf("-image and -out are required")
+		return errors.New("-image and -out are required")
 	}
 
 	credentials, err := bootstrap.NewCredentials(*name + ".manual.router-api.internal")

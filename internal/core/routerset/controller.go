@@ -339,8 +339,15 @@ func isReady(router *corev1alpha1.Router) bool {
 
 // isSettled reports whether a router is in service and runs the configuration
 // its config object describes: nothing is in flight on it.
-func isSettled(router *corev1alpha1.Router) bool {
-	return isReady(router) && conditions.IsTrue(router.Status.Conditions, corev1alpha1.ConfigAppliedCondition)
+//
+// Whether the configuration is applied is read from the config object itself,
+// for the generation it has now. The Router mirrors that condition, but only
+// when it is next reconciled, and in between it still shows the verdict on
+// the configuration from before. Going by the mirror, a router that was
+// handed a change a moment ago looks as if it had already applied it, and
+// the change would be handed to the next router straight away.
+func isSettled(router *corev1alpha1.Router, config *unstructured.Unstructured) bool {
+	return isReady(router) && config != nil && contract.IsConditionTrue(config, corev1alpha1.ConfigAppliedCondition)
 }
 
 // scaleDown removes up to excess routers and returns the ones that remain.
@@ -445,7 +452,7 @@ func (r *Reconciler) syncConfig(ctx context.Context, routers []corev1alpha1.Rout
 		configs[router.Name] = config
 		current, _, _ := unstructured.NestedMap(config.Object, "spec")
 		hasSpec[router.Name] = equality.Semantic.DeepEqual(current, t.configSpec)
-		upToDate[router.Name] = hasSpec[router.Name] && isSettled(router)
+		upToDate[router.Name] = hasSpec[router.Name] && isSettled(router, config)
 	}
 
 	var candidate *corev1alpha1.Router
@@ -454,7 +461,7 @@ func (r *Reconciler) syncConfig(ctx context.Context, routers []corev1alpha1.Rout
 		switch {
 		case configs[router.Name] == nil:
 			continue
-		case hasSpec[router.Name] && !isSettled(router):
+		case hasSpec[router.Name] && !isSettled(router, configs[router.Name]):
 			return upToDate, nil
 		case !hasSpec[router.Name] && (candidate == nil || (isReady(candidate) && !isReady(router))):
 			candidate = router
@@ -465,7 +472,7 @@ func (r *Reconciler) syncConfig(ctx context.Context, routers []corev1alpha1.Rout
 	}
 	if isReady(candidate) {
 		for i := range routers {
-			if routers[i].Name != candidate.Name && !isSettled(&routers[i]) {
+			if routers[i].Name != candidate.Name && !isSettled(&routers[i], configs[routers[i].Name]) {
 				return upToDate, nil
 			}
 		}
