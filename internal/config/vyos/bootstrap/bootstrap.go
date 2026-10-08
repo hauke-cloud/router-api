@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"math/big"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -39,6 +40,10 @@ const (
 	// router that works.
 	certificateLifetime = 20 * 365 * 24 * time.Hour
 )
+
+// imageReference is what an image name may consist of. It is the pattern the
+// API enforces on VyOSConfig.spec.image; keep the two in step.
+var imageReference = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:@-]*$`)
 
 //go:embed host-setup.sh
 var hostSetup string
@@ -306,6 +311,10 @@ func file(filePath, permissions, content string) writeFile {
 // into the router described by p.
 func UserData(p *Params) (string, error) {
 	const setupPath = "/usr/local/sbin/router-api-host-setup"
+	if !imageReference.MatchString(p.Image) {
+		// The image name becomes a line of a systemd unit file.
+		return "", fmt.Errorf("image %q is not an image reference", p.Image)
+	}
 	files := []writeFile{
 		file(HostConfigDir+"/scripts/vyos-postconfig-bootup.script", "0755", SeedScript(p)),
 		file("/etc/containers/systemd/vyos.container", "0644", quadlet(p)),

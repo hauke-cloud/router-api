@@ -282,3 +282,15 @@ func TestUserDataSizeLimit(t *testing.T) {
 		t.Errorf("err = %v, want the size limit named", err)
 	}
 }
+
+func TestUserDataRejectsAnImageNameThatIsNotOne(t *testing.T) {
+	// The API validates this too. The check here is for whoever calls this
+	// without the API in front, and for the day the API's pattern changes.
+	for _, image := range []string{"", "vyos:1\nPodmanArgs=--volume=/:/host", "vyos:1 extra", "vyos:1\t", "[Service]"} {
+		p := params(t)
+		p.Image = image
+		if _, err := UserData(p); err == nil {
+			t.Errorf("image %q was written into the unit file", image)
+		}
+	}
+}

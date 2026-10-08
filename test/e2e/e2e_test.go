@@ -59,8 +59,8 @@ var (
 
 func TestMain(m *testing.M) {
 	if os.Getenv("HCLOUD_TOKEN") == "" || os.Getenv("E2E_NETWORK") == "" {
-		fmt.Println("HCLOUD_TOKEN and E2E_NETWORK are not set, skipping the end-to-end test; see `make e2e`")
-		return
+		// Not asked for. The test reports itself as skipped.
+		os.Exit(m.Run())
 	}
 	os.Exit(testenv.RunWithConfig(m, func(cfg *rest.Config, c client.Client) { restConfig, k8s = cfg, c }))
 }
@@ -442,6 +442,9 @@ func (s *suite) floatingIPServer() string {
 }
 
 func TestRoutersOnHetzner(t *testing.T) {
+	if restConfig == nil {
+		t.Skip("HCLOUD_TOKEN and E2E_NETWORK are not set; this test creates billed servers, see `make e2e`")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &suite{
 		t: t, ctx: ctx, namespace: testenv.Namespace(t, k8s),
