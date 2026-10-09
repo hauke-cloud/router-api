@@ -58,6 +58,21 @@ type HetznerMachineSpec struct {
 	// +kubebuilder:default=true
 	// +optional
 	EnableIPv6 *bool `json:"enableIPv6,omitempty"`
+	// PrimaryIPv4BySlot gives the router in each slot a public address that
+	// stays when the router is replaced: the names of existing Hetzner
+	// Primary IPs, the first for slot 0, the second for slot 1, and so on.
+	// It needs a RouterDeployment with the Slots strategy.
+	//
+	// The Primary IPs are yours: create them in the location of the servers
+	// and with auto-delete off, or Hetzner deletes them with the first
+	// server they were assigned to. They are neither created nor deleted
+	// here.
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=63
+	// +listType=atomic
+	// +optional
+	PrimaryIPv4BySlot []string `json:"primaryIPv4BySlot,omitempty"`
 	// ProviderID is hcloud://<server id>, set once the server exists.
 	// +kubebuilder:validation:MaxLength=512
 	// +optional

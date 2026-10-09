@@ -228,6 +228,103 @@ spec:
                     minimum: 1
                     type: integer
                 type: object
+              slots:
+                description: |-
+                  Slots holds what differs between the routers of a group whose
+                  RouterDeployment uses the Slots strategy: the first entry is for the
+                  router in slot 0, the second for the one in slot 1, and so on. A
+                  router's own tunnel address or key goes here. If this is set there has
+                  to be an entry for every slot.
+                items:
+                  description: SlotSpec is the part of a configuration that belongs
+                    to one slot.
+                  properties:
+                    values:
+                      description: |-
+                        Values for the router in this slot. They are available to the
+                        templates like the shared values, and win over a shared value of the
+                        same name.
+                      items:
+                        description: |-
+                          Value is a named input of the configuration template, available there as
+                          {{ .Values.<name> }}.
+                        properties:
+                          configMapKeyRef:
+                            description: ConfigMapKeyRef reads the value from a ConfigMap
+                              in the same namespace.
+                            properties:
+                              key:
+                                description: |-
+                                  The key to select from the ConfigMap's Data field.
+                                  Keys in the BinaryData field are not currently propagated to container env vars.
+                                type: string
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                              optional:
+                                description: Specify whether the ConfigMap or its
+                                  key must be defined
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          name:
+                            description: Name of the value.
+                            maxLength: 63
+                            pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+                            type: string
+                          secretKeyRef:
+                            description: SecretKeyRef reads the value from a Secret
+                              in the same namespace.
+                            properties:
+                              key:
+                                description: The key of the secret to select from.  Must
+                                  be a valid secret key.
+                                type: string
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                              optional:
+                                description: Specify whether the Secret or its key
+                                  must be defined
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          value:
+                            description: Value is a literal.
+                            maxLength: 65536
+                            type: string
+                        required:
+                        - name
+                        type: object
+                        x-kubernetes-validations:
+                        - message: exactly one of value, secretKeyRef and configMapKeyRef
+                            is required
+                          rule: '(has(self.value) ? 1 : 0) + (has(self.secretKeyRef)
+                            ? 1 : 0) + (has(self.configMapKeyRef) ? 1 : 0) == 1'
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - name
+                      x-kubernetes-list-type: map
+                  type: object
+                maxItems: 32
+                type: array
+                x-kubernetes-list-type: atomic
               values:
                 description: Values available to the templates.
                 items:

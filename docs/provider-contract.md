@@ -99,3 +99,15 @@ A provider needs to read the core kinds it looks at (`routermachines` or `router
   `router.hauke.cloud/cloned-from-groupkind`.
 - Everything that belongs to one router carries `router.hauke.cloud/router-name`; everything of
   one group `router.hauke.cloud/deployment-name`.
+
+## Slots
+
+In a group that uses the Slots strategy, every object of a router also carries
+`router.hauke.cloud/slot`: "0", "1", and so on. The slot survives the router. Core guarantees
+that no two routers of a group hold the same slot, and that a slot is only given to a new router
+once the previous one is gone, including its infrastructure object.
+
+A provider ties to the slot whatever must not change when a router is replaced. The Hetzner
+provider gives the server the Primary IP listed for its slot, and waits while that address is
+still assigned to the previous server. The VyOS provider renders with the values listed for the
+slot. A provider must not create anything for a router whose slot it has nothing for.

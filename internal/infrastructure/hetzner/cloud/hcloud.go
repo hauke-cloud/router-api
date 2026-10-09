@@ -157,6 +157,24 @@ func deleteError(what string, err error) error {
 	return fmt.Errorf("delete %s: %w", what, err)
 }
 
+func (h *hetzner) PrimaryIPv4(ctx context.Context, name string) (*PrimaryIP, error) {
+	primary, _, err := h.client.PrimaryIP.GetByName(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("get primary IP %s: %w", name, err)
+	}
+	if primary == nil || primary.Type != hcloud.PrimaryIPTypeIPv4 {
+		return nil, fmt.Errorf("IPv4 primary IP %s: %w", name, ErrNotFound)
+	}
+	out := &PrimaryIP{ID: primary.ID, Name: primary.Name, AssigneeID: primary.AssigneeID, AutoDelete: primary.AutoDelete}
+	if addr, ok := netip.AddrFromSlice(primary.IP); ok {
+		out.IP = addr.Unmap()
+	}
+	if primary.Location != nil {
+		out.Location = primary.Location.Name
+	}
+	return out, nil
+}
+
 func (h *hetzner) ServerByName(ctx context.Context, name string) (*Server, error) {
 	server, _, err := h.client.Server.GetByName(ctx, name)
 	if err != nil {
@@ -232,6 +250,10 @@ func (h *hetzner) CreateServer(ctx context.Context, spec *ServerSpec) (*Server, 
 			return nil, fmt.Errorf("SSH key %s does not exist", name)
 		}
 		opts.SSHKeys = append(opts.SSHKeys, key)
+	}
+	if spec.PrimaryIPv4ID != 0 {
+		opts.PublicNet.EnableIPv4 = true
+		opts.PublicNet.IPv4 = &hcloud.PrimaryIP{ID: spec.PrimaryIPv4ID}
 	}
 	if spec.NetworkID != 0 {
 		opts.Networks = []*hcloud.Network{{ID: spec.NetworkID}}

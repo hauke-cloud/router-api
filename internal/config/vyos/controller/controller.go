@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -177,7 +178,7 @@ func (r *Reconciler) reconcile(ctx context.Context, config *configv1alpha1.VyOSC
 	if err != nil {
 		return reconcile.Result{}, err
 	}
-	values, secrets, valuesErr := r.values(ctx, config)
+	values, secrets, valuesErr := r.values(ctx, config, owner)
 
 	if err := r.ensureBootstrap(ctx, config, owner, credentials, values, valuesErr); err != nil {
 		return reconcile.Result{}, err
@@ -331,10 +332,23 @@ func (r *Reconciler) ensureCredentials(ctx context.Context, config *configv1alph
 
 // values resolves spec.values. secrets are the values that came from Secrets,
 // for redaction.
-func (r *Reconciler) values(ctx context.Context, config *configv1alpha1.VyOSConfig) (values map[string]string, secrets []string, err error) {
-	values = make(map[string]string, len(config.Spec.Values))
-	for i := range config.Spec.Values {
-		value := &config.Spec.Values[i]
+func (r *Reconciler) values(ctx context.Context, config *configv1alpha1.VyOSConfig, owner *corev1alpha1.Router) (values map[string]string, secrets []string, err error) {
+	// The shared values, then the ones of the router's slot over them.
+	all := config.Spec.Values
+	if len(config.Spec.Slots) > 0 {
+		slot, ok := slotOf(owner)
+		switch {
+		case !ok:
+			return nil, nil, errors.New("the configuration has per-slot values, but the router has no slot; it needs a RouterDeployment with the Slots strategy")
+		case slot >= len(config.Spec.Slots):
+			return nil, nil, fmt.Errorf("the configuration has values for %d slots and the router is in slot %d", len(config.Spec.Slots), slot)
+		}
+		all = append(slices.Clone(all), config.Spec.Slots[slot].Values...)
+	}
+
+	values = make(map[string]string, len(all))
+	for i := range all {
+		value := &all[i]
 		resolved, secret, err := r.resolve(ctx, config.Namespace, &value.ValueSource)
 		if err != nil {
 			return nil, secrets, fmt.Errorf("value %q: %w", value.Name, err)
@@ -345,6 +359,15 @@ func (r *Reconciler) values(ctx context.Context, config *configv1alpha1.VyOSConf
 		}
 	}
 	return values, secrets, nil
+}
+
+// slotOf returns the slot of a router and whether it has one.
+func slotOf(router *corev1alpha1.Router) (int, bool) {
+	slot, err := strconv.Atoi(router.Labels[corev1alpha1.SlotLabel])
+	if err != nil || slot < 0 {
+		return 0, false
+	}
+	return slot, true
 }
 
 func (r *Reconciler) resolve(ctx context.Context, namespace string, source *configv1alpha1.ValueSource) (value string, secret bool, err error) {
@@ -398,7 +421,7 @@ func defaultString(value, fallback string) string {
 func (r *Reconciler) data(ctx context.Context, config *configv1alpha1.VyOSConfig, owner *corev1alpha1.Router, values map[string]string) (*render.Data, error) {
 	data := &render.Data{
 		Values: values,
-		Router: render.Router{Name: owner.Name, Namespace: owner.Namespace, Group: owner.Labels[corev1alpha1.DeploymentNameLabel]},
+		Router: routerData(owner),
 		Host: render.Host{
 			PublicInterface:  defaultString(config.Spec.Host.PublicInterface, "eth0"),
 			PrivateInterface: defaultString(config.Spec.Host.PrivateInterface, "eth1"),
@@ -425,10 +448,19 @@ func (r *Reconciler) data(ctx context.Context, config *configv1alpha1.VyOSConfig
 			// an address, and this router is then reconfigured.
 			continue
 		}
-		data.Peers = append(data.Peers, render.Peer{Name: peer.Name, ExternalIP: external, InternalIP: internal})
+		slot, _ := slotOf(peer)
+		data.Peers = append(data.Peers, render.Peer{Name: peer.Name, Slot: slot, ExternalIP: external, InternalIP: internal})
 	}
 	render.SortPeers(data.Peers)
 	return data, nil
+}
+
+func routerData(owner *corev1alpha1.Router) render.Router {
+	slot, _ := slotOf(owner)
+	return render.Router{
+		Name: owner.Name, Namespace: owner.Namespace,
+		Group: owner.Labels[corev1alpha1.DeploymentNameLabel], Slot: slot,
+	}
 }
 
 func addressesOf(router *corev1alpha1.Router) (external, externalV6, internal string) {
@@ -479,7 +511,7 @@ func (r *Reconciler) ensureBootstrap(ctx context.Context, config *configv1alpha1
 	// and no peers to refer to yet.
 	data := &render.Data{
 		Values: values,
-		Router: render.Router{Name: owner.Name, Namespace: owner.Namespace, Group: owner.Labels[corev1alpha1.DeploymentNameLabel]},
+		Router: routerData(owner),
 		Host:   render.Host{PublicInterface: params.PublicInterface, PrivateInterface: params.PrivateInterface},
 	}
 	for i := range config.Spec.Files {

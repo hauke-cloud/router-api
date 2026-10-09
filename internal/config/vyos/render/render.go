@@ -34,6 +34,8 @@ type Router struct {
 	// Group is the name of the RouterDeployment the router belongs to, empty
 	// for a router created by hand.
 	Group string
+	// Slot of the router in its group, 0 for a router without one.
+	Slot int
 }
 
 // Machine is the instance's addresses.
@@ -48,7 +50,9 @@ type Machine struct {
 
 // Peer is another router of the same group.
 type Peer struct {
-	Name       string
+	Name string
+	// Slot of the peer, 0 for a router without one.
+	Slot       int
 	ExternalIP string
 	InternalIP string
 }

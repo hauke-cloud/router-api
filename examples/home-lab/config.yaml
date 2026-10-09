@@ -9,15 +9,10 @@ spec:
       image: ghcr.io/hauke-cloud/vyos:latest
 
       values:
-        - name: wireguardPrivateKey
-          secretKeyRef: {name: edge-wireguard, key: privateKey}
         - name: labPublicKey
           value: REPLACE_WITH_THE_LAB_ROUTERS_WIREGUARD_PUBLIC_KEY=
         - name: hcloudToken
           secretKeyRef: {name: hcloud, key: token}
-        # The Floating IP the lab dials.
-        - name: vpnAddress
-          value: 203.0.113.10
         # A private address that follows the active router (a Hetzner alias IP).
         - name: privateVIP
           value: 10.0.1.100
@@ -39,6 +34,27 @@ spec:
         - name: syslogServer
           value: 192.168.10.5
 
+      # What each router has of its own, by slot. Every router keeps a tunnel
+      # to the lab up all the time, with its own key and its own addresses
+      # inside the tunnel, so that the router that takes over on a failover
+      # already has one. The lab dials each router at the Primary IP of its
+      # slot (machine.yaml).
+      slots:
+        - values:
+            - name: wireguardPrivateKey
+              secretKeyRef: {name: edge-wireguard, key: privateKey0}
+            - name: tunnelLocal
+              value: 10.99.0.1
+            - name: tunnelRemote
+              value: 10.99.0.2
+        - values:
+            - name: wireguardPrivateKey
+              secretKeyRef: {name: edge-wireguard, key: privateKey1}
+            - name: tunnelLocal
+              value: 10.99.0.5
+            - name: tunnelRemote
+              value: 10.99.0.6
+
       # Placed below /config when a router is created. A change replaces the
       # routers. These two are what hcloud-vrrp-failover reads when a router
       # becomes VRRP master.
@@ -53,7 +69,7 @@ spec:
               "tokenFile": "/config/hetzner/token",
               "groups": {
                 "wan": {
-                  "floatingIPs": ["{{ .Values.vpnAddress }}", "203.0.113.16"],
+                  "floatingIPs": ["203.0.113.16"],
                   "aliasIPs": ["{{ .Values.privateVIP }}"]
                 }
               }
@@ -89,29 +105,28 @@ spec:
         {{- range .Peers }}
         set high-availability vrrp group wan peer-address {{ .InternalIP }}
         {{- end }}
-        # Moves the Floating IPs and the alias IP to this router.
+        # Moves the lab's public addresses and the alias IP to this router.
         set high-availability vrrp group wan transition-script master '/usr/local/bin/hcloud-vrrp-failover wan'
 
         # --- the tunnel to the lab -----------------------------------------
-        # The VPN address lives on both routers; only the one the Floating IP
-        # is assigned to is sent any traffic for it.
-        set interfaces dummy dum0 address {{ .Values.vpnAddress }}/32
-        set interfaces wireguard wg0 address 10.99.0.1/30
+        # This router's own tunnel, on its own public address.
+        set interfaces wireguard wg0 address {{ .Values.tunnelLocal }}/30
         set interfaces wireguard wg0 port 51820
         set interfaces wireguard wg0 private-key {{ .Values.wireguardPrivateKey }}
         # No endpoint: the lab dials in, from wherever it currently is.
         set interfaces wireguard wg0 peer lab public-key {{ .Values.labPublicKey }}
-        set interfaces wireguard wg0 peer lab allowed-ips 10.99.0.2/32
+        set interfaces wireguard wg0 peer lab allowed-ips {{ .Values.tunnelRemote }}/32
         set interfaces wireguard wg0 peer lab allowed-ips {{ .Values.servicePrefix }}
         set interfaces wireguard wg0 peer lab allowed-ips {{ .Values.labNetworks }}
 
         # --- routing ---------------------------------------------------------
-        # The lab announces which of its public addresses are in use.
+        # The lab announces which of its public addresses are in use, to
+        # every router over that router's tunnel.
         set protocols bgp system-as {{ .Values.localAS }}
-        set protocols bgp parameters router-id 10.99.0.1
-        set protocols bgp neighbor 10.99.0.2 remote-as {{ .Values.labAS }}
-        set protocols bgp neighbor 10.99.0.2 description lab
-        set protocols bgp neighbor 10.99.0.2 address-family ipv4-unicast prefix-list import LAB-IN
+        set protocols bgp parameters router-id {{ .Values.tunnelLocal }}
+        set protocols bgp neighbor {{ .Values.tunnelRemote }} remote-as {{ .Values.labAS }}
+        set protocols bgp neighbor {{ .Values.tunnelRemote }} description lab
+        set protocols bgp neighbor {{ .Values.tunnelRemote }} address-family ipv4-unicast prefix-list import LAB-IN
         set policy prefix-list LAB-IN rule 10 action permit
         set policy prefix-list LAB-IN rule 10 prefix {{ .Values.servicePrefix }}
         set policy prefix-list LAB-IN rule 10 le 32
@@ -161,9 +176,8 @@ spec:
         set firewall ipv4 forward filter rule 30 inbound-interface name wg0
 
         # --- observability ---------------------------------------------------
-        # Reachable from the lab through the tunnel, which only the active
-        # router has. The operator watches both routers regardless.
-        set service monitoring prometheus node-exporter listen-address 10.99.0.1
-        set service monitoring prometheus frr-exporter listen-address 10.99.0.1
+        # Reachable from the lab through each router's tunnel.
+        set service monitoring prometheus node-exporter listen-address {{ .Values.tunnelLocal }}
+        set service monitoring prometheus frr-exporter listen-address {{ .Values.tunnelLocal }}
         set system syslog remote {{ .Values.syslogServer }} facility all level info
         set system syslog remote {{ .Values.syslogServer }} protocol udp

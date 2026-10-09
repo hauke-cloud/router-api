@@ -61,10 +61,16 @@ only while the others are fine. Each change is committed with a revert timer and
 the same connection; a change that cuts the operator off is therefore never confirmed and undoes
 itself. A change the router refuses is rolled back and goes no further than the first router.
 
-**Everything else** (the image, files, the server type) replaces the routers: a new one is
-built and has to prove itself before an old one is asked to hand over its addresses and is
-deleted. With the default `maxSurge: 1` and `maxUnavailable: 0` there are never fewer working
-routers than you asked for.
+**Everything else** (the image, files, the server type) replaces the routers, one after the
+other, in one of two ways:
+
+- `Surge`, the default: a new router is built and has to prove itself before an old one is asked
+  to hand over and is deleted. There are never fewer working routers than you asked for. The
+  routers are interchangeable.
+- `Slots`: every router has a slot that keeps a public address and values of its own across
+  replacements, so that, for instance, the other end can keep a tunnel to every router. A router
+  is replaced in its slot: it hands over and is removed first, and the group is one router short
+  until its successor works.
 
 A router is `Ready` while it is in service. Whether it already runs the latest configuration is
 a separate condition, `ConfigApplied`: a router that is applying a change, or refused one, still

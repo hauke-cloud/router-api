@@ -40,6 +40,20 @@ type Server struct {
 	PrivateIPs []netip.Addr
 }
 
+// PrimaryIP is a Hetzner Cloud Primary IP: a public address that exists
+// independently of the server it is assigned to.
+type PrimaryIP struct {
+	ID   int64
+	Name string
+	IP   netip.Addr
+	// AssigneeID is the server the address is assigned to, 0 for none.
+	AssigneeID int64
+	// AutoDelete means Hetzner deletes the address together with the server
+	// it is assigned to.
+	AutoDelete bool
+	Location   string
+}
+
 // ServerSpec describes a server to create.
 type ServerSpec struct {
 	Name       string
@@ -57,6 +71,9 @@ type ServerSpec struct {
 	PlacementGroupID int64
 	EnableIPv4       bool
 	EnableIPv6       bool
+	// PrimaryIPv4ID is an existing, unassigned Primary IP to give the server
+	// instead of a new address; 0 for a new one.
+	PrimaryIPv4ID int64
 }
 
 // FirewallRule allows inbound traffic.
@@ -89,6 +106,9 @@ type Cloud interface {
 	// DeletePlacementGroup deletes the named placement group, with the same
 	// rules as DeleteFirewall.
 	DeletePlacementGroup(ctx context.Context, name string) error
+
+	// PrimaryIPv4 returns the named IPv4 Primary IP, or ErrNotFound.
+	PrimaryIPv4(ctx context.Context, name string) (*PrimaryIP, error)
 
 	// ServerByName returns the named server, or ErrNotFound.
 	ServerByName(ctx context.Context, name string) (*Server, error)

@@ -225,16 +225,22 @@ func (r *MachineReconciler) create(ctx context.Context, machine *infrav1alpha1.H
 		return nil, nil
 	}
 
+	primaryIPv4, ok, err := r.primaryIPv4(ctx, machine, hcloud)
+	if err != nil || !ok {
+		return nil, err
+	}
+
 	image := machine.Spec.Image
 	if image == "" {
 		image = "ubuntu-24.04"
 	}
 	server, err := hcloud.CreateServer(ctx, &cloud.ServerSpec{
-		Name:       ServerName(machine),
-		ServerType: machine.Spec.ServerType,
-		Location:   machine.Spec.Location,
-		Image:      image,
-		UserData:   userData,
+		PrimaryIPv4ID: primaryIPv4,
+		Name:          ServerName(machine),
+		ServerType:    machine.Spec.ServerType,
+		Location:      machine.Spec.Location,
+		Image:         image,
+		UserData:      userData,
 		Labels: map[string]string{
 			ManagedByLabel:  ManagedByValue,
 			MachineUIDLabel: string(machine.UID),
@@ -252,6 +258,50 @@ func (r *MachineReconciler) create(ctx context.Context, machine *infrav1alpha1.H
 		return nil, fmt.Errorf("create server: %w", err)
 	}
 	return server, nil
+}
+
+// primaryIPv4 returns the ID of the Primary IP the machine's slot is to have,
+// or 0 if it is to get an address of its own. ok is false when the server
+// cannot be created yet, or not at all as specified; the Ready condition
+// then says why.
+func (r *MachineReconciler) primaryIPv4(ctx context.Context, machine *infrav1alpha1.HetznerMachine, hcloud cloud.Cloud) (id int64, ok bool, err error) {
+	names := machine.Spec.PrimaryIPv4BySlot
+	if len(names) == 0 {
+		return 0, true, nil
+	}
+	unusable := func(format string, args ...any) (int64, bool, error) {
+		notReady(machine, ReasonPrimaryIPUnusable, fmt.Sprintf(format, args...))
+		return 0, false, nil
+	}
+
+	label, labelled := machine.Labels[corev1alpha1.SlotLabel]
+	slot, convErr := strconv.Atoi(label)
+	if !labelled || convErr != nil || slot < 0 {
+		return unusable("primaryIPv4BySlot is set, but this machine has no slot; it needs a RouterDeployment with the Slots strategy")
+	}
+	if slot >= len(names) {
+		return unusable("primaryIPv4BySlot names %d addresses and this machine is in slot %d", len(names), slot)
+	}
+
+	primary, err := hcloud.PrimaryIPv4(ctx, names[slot])
+	switch {
+	case errors.Is(err, cloud.ErrNotFound):
+		return unusable("Hetzner has no IPv4 Primary IP named %q; it is not created by this provider", names[slot])
+	case err != nil:
+		notReady(machine, ReasonCloudError, err.Error())
+		return 0, false, err
+	case primary.AutoDelete:
+		// It would not survive the first server it is given to, and the
+		// address everyone was told to dial would go back to Hetzner.
+		return unusable("Primary IP %q has auto-delete on and would be deleted with the server; turn it off", primary.Name)
+	case primary.AssigneeID != 0:
+		// Normal during a replacement: the server of the router this one
+		// succeeds is still on its way out.
+		notReady(machine, ReasonWaitingForPrimaryIP,
+			fmt.Sprintf("Primary IP %q is still assigned to server %d", primary.Name, primary.AssigneeID))
+		return 0, false, nil
+	}
+	return primary.ID, true, nil
 }
 
 // remediate acts on a remediation request once. The request is the value of

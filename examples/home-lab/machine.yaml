@@ -11,3 +11,10 @@ spec:
       serverType: cx23
       location: fsn1
       image: ubuntu-24.04
+      # The public address of the router in each slot. It stays when the
+      # router is replaced, which is what the lab's router dials. These are
+      # existing Hetzner Primary IPs, created in the same location and with
+      # auto-delete off.
+      primaryIPv4BySlot:
+        - edge-0
+        - edge-1

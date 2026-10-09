@@ -252,3 +252,42 @@ func TestResetServer(t *testing.T) {
 		t.Errorf("calls = %v", a.calls)
 	}
 }
+
+func TestPrimaryIPv4(t *testing.T) {
+	_, c := newAPI(t, map[string]string{
+		"GET /primary_ips?name=edge-0": `{"primary_ips":[{"id":42,"name":"edge-0","ip":"198.51.100.10","type":"ipv4",
+		  "assignee_id":4711,"assignee_type":"server","auto_delete":false,"location":{"id":1,"name":"fsn1"}}]}`,
+		"GET /primary_ips?name=v6":   `{"primary_ips":[{"id":43,"name":"v6","ip":"2001:db8::/64","type":"ipv6","auto_delete":true}]}`,
+		"GET /primary_ips?name=nope": `{"primary_ips":[]}`,
+	})
+	primary, err := c.PrimaryIPv4(context.Background(), "edge-0")
+	if err != nil {
+		t.Fatalf("PrimaryIPv4: %v", err)
+	}
+	want := PrimaryIP{ID: 42, Name: "edge-0", IP: netip.MustParseAddr("198.51.100.10"), AssigneeID: 4711, Location: "fsn1"}
+	if *primary != want {
+		t.Errorf("primary IP = %+v, want %+v", *primary, want)
+	}
+	for _, name := range []string{"nope", "v6"} {
+		if _, err := c.PrimaryIPv4(context.Background(), name); !errors.Is(err, ErrNotFound) {
+			t.Errorf("%s: err = %v, want ErrNotFound", name, err)
+		}
+	}
+}
+
+func TestCreateServerWithAPrimaryIP(t *testing.T) {
+	a, c := newAPI(t, map[string]string{
+		"GET /server_types?name=cx23":   `{"server_types":[{"id":3,"name":"cx23","architecture":"x86"}]}`,
+		"GET /images?name=ubuntu-24.04": `{"images":[{"id":99,"name":"ubuntu-24.04","type":"system","architecture":"x86"}]}`,
+		"POST /servers":                 `{"server":` + serverJSON + `,"action":{"id":1,"status":"running"},"next_actions":[],"root_password":null}`,
+	})
+	if _, err := c.CreateServer(context.Background(), &ServerSpec{
+		Name: "edge-abc", ServerType: "cx23", Location: "fsn1", Image: "ubuntu-24.04", PrimaryIPv4ID: 42,
+	}); err != nil {
+		t.Fatalf("CreateServer: %v", err)
+	}
+	publicNet, _ := a.bodies["POST /servers"]["public_net"].(map[string]any)
+	if publicNet["ipv4"] != float64(42) || publicNet["enable_ipv4"] != true {
+		t.Errorf("public_net = %v, want the Primary IP's ID", publicNet)
+	}
+}

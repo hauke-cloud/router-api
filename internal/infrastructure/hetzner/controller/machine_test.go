@@ -255,3 +255,108 @@ func TestMachineDeletionWithoutANetwork(t *testing.T) {
 		t.Errorf("Ready = %+v", ready)
 	}
 }
+
+// inSlot gives the machine a slot and a Primary IP per slot.
+func (f *fixture) inSlot(slot string, primaryIPs ...string) {
+	f.t.Helper()
+	machine := f.hetznerMachine()
+	if slot != "" {
+		machine.Labels = map[string]string{corev1alpha1.SlotLabel: slot}
+	}
+	machine.Spec.PrimaryIPv4BySlot = primaryIPs
+	if err := k8s.Update(f.ctx, machine); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func TestMachineGetsThePrimaryIPOfItsSlot(t *testing.T) {
+	f := newFixture(t)
+	f.reconcileNetwork()
+	f.cloud.AddPrimaryIP("edge-0", "198.51.100.10", false)
+	f.cloud.AddPrimaryIP("edge-1", "198.51.100.11", false)
+	f.createMachine(true)
+	f.inSlot("1", "edge-0", "edge-1")
+
+	f.reconcileMachine()
+
+	server, ok := f.cloud.Servers()[f.serverName()]
+	if !ok {
+		t.Fatalf("no server; Ready = %s", readyReason(f.hetznerMachine()))
+	}
+	if got := server.PublicIPv4.String(); got != "198.51.100.11" {
+		t.Errorf("public address = %s, want the Primary IP of slot 1", got)
+	}
+
+	// The address outlives the server: that is the point of it.
+	if err := k8s.Delete(f.ctx, f.hetznerMachine()); err != nil {
+		t.Fatal(err)
+	}
+	f.reconcileMachine()
+	primary, err := f.cloud.PrimaryIPv4(f.ctx, "edge-1")
+	if err != nil || primary.AssigneeID != 0 {
+		t.Errorf("after the server is gone: primary IP = %+v, err = %v", primary, err)
+	}
+}
+
+func TestMachineWaitsForItsPrimaryIP(t *testing.T) {
+	f := newFixture(t)
+	f.reconcileNetwork()
+	f.cloud.AddPrimaryIP("edge-0", "198.51.100.10", false)
+	// Still on the server of the router this one replaces.
+	f.cloud.AssignPrimaryIP("edge-0", 4711)
+	f.createMachine(true)
+	f.inSlot("0", "edge-0")
+
+	result := f.reconcileMachine()
+
+	if len(f.cloud.Servers()) != 0 {
+		t.Fatal("a server was created without the address of its slot")
+	}
+	if got := readyReason(f.hetznerMachine()); got != "False/"+ReasonWaitingForPrimaryIP {
+		t.Errorf("Ready = %s", got)
+	}
+	if result.RequeueAfter == 0 {
+		t.Error("no requeue")
+	}
+
+	f.cloud.AssignPrimaryIP("edge-0", 0)
+	f.reconcileMachine()
+	if len(f.cloud.Servers()) != 1 {
+		t.Errorf("no server once the address is free; Ready = %s", readyReason(f.hetznerMachine()))
+	}
+}
+
+func TestMachineRefusesAPrimaryIPItCannotUse(t *testing.T) {
+	tests := map[string]struct {
+		slot       string
+		primaryIPs []string
+		want       string
+	}{
+		"missing":             {"0", []string{"nope"}, ReasonPrimaryIPUnusable},
+		"no address for slot": {"2", []string{"edge-0", "edge-1"}, ReasonPrimaryIPUnusable},
+		// Hetzner would delete it together with the first server, and the
+		// lab would be dialling an address that belongs to someone else.
+		"deleted with the server": {"0", []string{"throwaway"}, ReasonPrimaryIPUnusable},
+		"router without a slot":   {"", []string{"edge-0"}, ReasonPrimaryIPUnusable},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			f.reconcileNetwork()
+			f.cloud.AddPrimaryIP("edge-0", "198.51.100.10", false)
+			f.cloud.AddPrimaryIP("edge-1", "198.51.100.11", false)
+			f.cloud.AddPrimaryIP("throwaway", "198.51.100.12", true)
+			f.createMachine(true)
+			f.inSlot(tt.slot, tt.primaryIPs...)
+
+			f.reconcileMachine()
+
+			if len(f.cloud.Servers()) != 0 {
+				t.Error("a server was created")
+			}
+			if got := readyReason(f.hetznerMachine()); got != "False/"+tt.want {
+				t.Errorf("Ready = %s", got)
+			}
+		})
+	}
+}

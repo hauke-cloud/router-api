@@ -40,8 +40,9 @@ Values with spaces need quotes, as on the VyOS command line:
 | `.Values.<name>` | a value from `spec.values` |
 | `.Router.Name`, `.Router.Namespace` | the Router object |
 | `.Router.Group` | the name of its RouterDeployment |
+| `.Router.Slot` | its slot, if the deployment uses the Slots strategy (0 otherwise) |
 | `.Machine.ExternalIP`, `.Machine.ExternalIPv6`, `.Machine.InternalIP` | the server's addresses |
-| `.Peers` | the other routers of the group, sorted by name: `.Name`, `.ExternalIP`, `.InternalIP` |
+| `.Peers` | the other routers of the group, sorted by name: `.Name`, `.Slot`, `.ExternalIP`, `.InternalIP` |
 | `.Host.PublicInterface`, `.Host.PrivateInterface` | `eth0` and `eth1` unless `spec.host` says otherwise |
 
 Functions: `quote` (make a value one token), `default "fallback" value`, `required "message"
@@ -70,6 +71,34 @@ values:
 
 Values from Secrets are removed from anything the operator writes to an object's status, such as
 the router's explanation of why it refused a commit.
+
+## Values per slot
+
+In a group whose RouterDeployment uses the Slots strategy every router has a
+slot that survives its replacement. What a router has of its own goes under
+`slots`, one entry per slot:
+
+```yaml
+values:
+  - name: labPublicKey
+    value: ...
+slots:
+  - values:                      # slot 0
+      - name: tunnelLocal
+        value: 10.99.0.1
+      - name: wireguardPrivateKey
+        secretKeyRef: {name: edge-wireguard, key: privateKey0}
+  - values:                      # slot 1
+      - name: tunnelLocal
+        value: 10.99.0.5
+      - name: wireguardPrivateKey
+        secretKeyRef: {name: edge-wireguard, key: privateKey1}
+```
+
+The templates see them as `.Values.<name>` like any other value; a slot's value
+wins over a shared one of the same name. If `slots` is set there has to be an
+entry for every slot of the group. A router whose slot has none is not
+configured at all, rather than with another router's values.
 
 ## Files
 

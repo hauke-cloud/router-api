@@ -76,6 +76,17 @@ type File struct {
 	ValueSource `json:",inline"`
 }
 
+// SlotSpec is the part of a configuration that belongs to one slot.
+type SlotSpec struct {
+	// Values for the router in this slot. They are available to the
+	// templates like the shared values, and win over a shared value of the
+	// same name.
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	Values []Value `json:"values,omitempty"`
+}
+
 // ManagementSpec says how the operator talks to the router.
 type ManagementSpec struct {
 	// Port the router's HTTPS API listens on.
@@ -148,6 +159,15 @@ type VyOSConfigSpec struct {
 	// +listMapKey=name
 	// +optional
 	Values []Value `json:"values,omitempty"`
+	// Slots holds what differs between the routers of a group whose
+	// RouterDeployment uses the Slots strategy: the first entry is for the
+	// router in slot 0, the second for the one in slot 1, and so on. A
+	// router's own tunnel address or key goes here. If this is set there has
+	// to be an entry for every slot.
+	// +kubebuilder:validation:MaxItems=32
+	// +listType=atomic
+	// +optional
+	Slots []SlotSpec `json:"slots,omitempty"`
 	// Files placed below /config at first boot.
 	// +listType=map
 	// +listMapKey=path

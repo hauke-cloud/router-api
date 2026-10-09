@@ -113,9 +113,14 @@ func (d *datacenter) boot(spec *cloud.ServerSpec, server *cloud.Server) {
 	}
 
 	// Every server gets a loopback address of its own, so that the routers
-	// can all listen on the one management port.
+	// can all listen on the one management port. A server that was given a
+	// Primary IP already has its address, and listens there: its successor
+	// in the slot will listen on the very same one.
 	d.next++
 	address := netip.AddrFrom4([4]byte{127, 0, 0, d.next})
+	if spec.PrimaryIPv4ID != 0 {
+		address = server.PublicIPv4
+	}
 	options.Config = config.String()
 	options.ListenAddress = netip.AddrPortFrom(address, uint16(d.port)).String() //nolint:gosec // a port number
 	d.routers[spec.Name] = vyostest.Start(d.t, &options)
@@ -200,7 +205,7 @@ func start(t *testing.T) *system {
 	if os.Getenv("SYSTEM_TEST_LOG") != "" {
 		logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	}
-	cfg := &manager.Config{MetricsAddress: "0", ProbeAddress: "0", Namespace: s.namespace, InstallCRDs: true}
+	cfg := &manager.Config{MetricsAddress: "0", ProbeAddress: "0", Namespace: s.namespace, InstallCRDs: true, AllowDuplicateControllers: true}
 
 	var wg sync.WaitGroup
 	for _, definition := range []*manager.Definition{managers.Core(), managers.Hetzner(s.cloud.Factory()), managers.VyOS()} {
@@ -228,7 +233,19 @@ set high-availability vrrp group wan peer-address {{ .InternalIP }}
 {{- end }}
 `
 
+// customize changes the objects of a group before they are created.
+type customize struct {
+	deployment func(*corev1alpha1.RouterDeployment)
+	machine    func(*infrav1alpha1.HetznerMachineTemplate)
+	config     func(*configv1alpha1.VyOSConfigTemplate)
+}
+
 func (s *system) create() {
+	s.t.Helper()
+	s.createWith(customize{})
+}
+
+func (s *system) createWith(c customize) {
 	s.t.Helper()
 	labels := map[string]string{"app": "edge"}
 	fast := metav1.Duration{Duration: 3 * time.Second}
@@ -298,6 +315,20 @@ func (s *system) create() {
 		},
 	}
 	for _, object := range objects {
+		switch typed := object.(type) {
+		case *corev1alpha1.RouterDeployment:
+			if c.deployment != nil {
+				c.deployment(typed)
+			}
+		case *infrav1alpha1.HetznerMachineTemplate:
+			if c.machine != nil {
+				c.machine(typed)
+			}
+		case *configv1alpha1.VyOSConfigTemplate:
+			if c.config != nil {
+				c.config(typed)
+			}
+		}
 		if err := k8s.Create(s.ctx, object); err != nil {
 			s.t.Fatalf("create %T: %v", object, err)
 		}
@@ -578,4 +609,128 @@ func TestRouterGroupLifecycle(t *testing.T) {
 		return apierrors.IsNotFound(err) && len(s.cloud.PlacementGroups()) == 0 &&
 			s.cloud.Firewall("router-api-"+s.namespace+"-edge") == nil
 	}, nil)
+}
+
+// bySlot returns the routers that are not being deleted, by slot.
+func (s *system) bySlot() map[string]*corev1alpha1.Router {
+	s.t.Helper()
+	list := &corev1alpha1.RouterList{}
+	if err := k8s.List(s.ctx, list, client.InNamespace(s.namespace)); err != nil {
+		s.t.Fatal(err)
+	}
+	out := map[string]*corev1alpha1.Router{}
+	for i := range list.Items {
+		if list.Items[i].DeletionTimestamp.IsZero() {
+			out[list.Items[i].Labels[corev1alpha1.SlotLabel]] = &list.Items[i]
+		}
+	}
+	return out
+}
+
+// objects returns the number of Router objects, those being deleted included.
+func (s *system) objects() int {
+	s.t.Helper()
+	list := &corev1alpha1.RouterList{}
+	if err := k8s.List(s.ctx, list, client.InNamespace(s.namespace)); err != nil {
+		s.t.Fatal(err)
+	}
+	return len(list.Items)
+}
+
+// TestSlots runs a group whose routers each have something of their own that
+// has to survive their replacement: a public address and a tunnel. That is
+// what lets the other side keep a tunnel to every router, so that a failover
+// does not have to wait for one to be set up.
+func TestSlots(t *testing.T) {
+	s := start(t)
+	// The addresses exist before the routers and belong to nobody yet.
+	addresses := map[string]string{"0": "127.0.1.10", "1": "127.0.1.11"}
+	tunnels := map[string]string{"0": "10.99.0.1/30", "1": "10.99.0.5/30"}
+	s.cloud.AddPrimaryIP("edge-0", addresses["0"], false)
+	s.cloud.AddPrimaryIP("edge-1", addresses["1"], false)
+
+	s.createWith(customize{
+		deployment: func(d *corev1alpha1.RouterDeployment) { d.Spec.Strategy.Type = corev1alpha1.SlotsStrategy },
+		machine: func(m *infrav1alpha1.HetznerMachineTemplate) {
+			m.Spec.Template.Spec.PrimaryIPv4BySlot = []string{"edge-0", "edge-1"}
+		},
+		config: func(c *configv1alpha1.VyOSConfigTemplate) {
+			c.Spec.Template.Spec.Commands = configCommands + "set interfaces dummy dum1 address {{ .Values.tunnel }}\n"
+			for _, slot := range []string{"0", "1"} {
+				c.Spec.Template.Spec.Slots = append(c.Spec.Template.Spec.Slots, configv1alpha1.SlotSpec{Values: []configv1alpha1.Value{
+					{Name: "tunnel", ValueSource: configv1alpha1.ValueSource{Value: ptr.To(tunnels[slot])}},
+				}})
+			}
+		},
+	})
+
+	// correct reports whether both slots hold a ready router with the
+	// slot's address that runs the slot's configuration.
+	correct := func() bool {
+		routers := s.bySlot()
+		ready := s.ready()
+		for slot, address := range addresses {
+			router := routers[slot]
+			if router == nil || !slices.Contains(ready, router.Name) {
+				return false
+			}
+			server, ok := s.cloud.Servers()[router.Name]
+			if !ok || server.PublicIPv4.String() != address {
+				return false
+			}
+			fake := s.dc.router(router.Name)
+			if fake == nil || !slices.Contains(fake.Running(), "set interfaces dummy dum1 address "+tunnels[slot]) {
+				return false
+			}
+		}
+		return len(routers) == 2
+	}
+	s.eventually("a router in each slot, with its address and its tunnel", 90*time.Second, correct, nil)
+	first := s.bySlot()
+
+	// --- replacement in place ---------------------------------------------
+	// The promise is a different one from the Surge strategy's: never two
+	// routers in a slot, and never both slots empty.
+	inPlace := func() string {
+		if n := s.objects(); n > 2 {
+			return fmt.Sprintf("%d routers exist; a slot holds one", n)
+		}
+		if len(s.ready()) == 0 {
+			return "no router is ready; they have to be replaced one after the other"
+		}
+		return ""
+	}
+	infra := &infrav1alpha1.HetznerMachineTemplate{}
+	if err := k8s.Get(s.ctx, types.NamespacedName{Namespace: s.namespace, Name: "edge"}, infra); err != nil {
+		t.Fatal(err)
+	}
+	infra.Spec.Template.Spec.ServerType = "cx33"
+	if err := k8s.Update(s.ctx, infra); err != nil {
+		t.Fatal(err)
+	}
+	s.eventually("both routers to be replaced in their slots", 3*time.Minute, func() bool {
+		routers := s.bySlot()
+		for slot := range addresses {
+			if routers[slot] == nil || routers[slot].Name == first[slot].Name {
+				return false
+			}
+			if spec, _ := s.cloud.Spec(routers[slot].Name); spec.ServerType != "cx33" {
+				return false
+			}
+		}
+		return correct()
+	}, inPlace)
+
+	// --- a router that dies comes back in its slot -----------------------
+	second := s.bySlot()
+	s.dc.router(second["1"].Name).Stop()
+	s.eventually("the dead router to be replaced in slot 1", 3*time.Minute, func() bool {
+		routers := s.bySlot()
+		return routers["1"] != nil && routers["1"].Name != second["1"].Name && correct()
+	}, func() string {
+		if routers := s.bySlot(); routers["0"] == nil || routers["0"].Name != second["0"].Name {
+			return "the healthy router in slot 0 was touched"
+		}
+		return inPlace()
+	})
 }

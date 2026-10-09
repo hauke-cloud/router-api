@@ -31,6 +31,8 @@ const (
 	ReasonServerNotRunning        = "ServerNotRunning"
 	ReasonServerNotFound          = "ServerNotFound"
 	ReasonNameConflict            = "NameConflict"
+	ReasonWaitingForPrimaryIP     = "WaitingForPrimaryIP"
+	ReasonPrimaryIPUnusable       = "PrimaryIPUnusable"
 	ReasonDeleting                = "Deleting"
 	ReasonPaused                  = "Paused"
 )

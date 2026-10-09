@@ -30,6 +30,7 @@ type Cloud struct {
 	servers         map[int64]*cloud.Server
 	specs           map[int64]cloud.ServerSpec
 	resets          map[int64]int
+	primaryIPs      map[string]*cloud.PrimaryIP
 	// Tokens records every token a Cloud was requested for through Factory.
 	Tokens []string
 	// Err, if set, is returned by every call.
@@ -52,6 +53,7 @@ func New(networks ...string) *Cloud {
 		servers:         map[int64]*cloud.Server{},
 		specs:           map[int64]cloud.ServerSpec{},
 		resets:          map[int64]int{},
+		primaryIPs:      map[string]*cloud.PrimaryIP{},
 	}
 	for _, name := range networks {
 		c.networks[name] = c.id()
@@ -147,6 +149,35 @@ func (c *Cloud) PlacementGroups() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return slices.Sorted(maps.Keys(c.placementGroups))
+}
+
+// AddPrimaryIP puts an unassigned Primary IP into the project.
+func (c *Cloud) AddPrimaryIP(name, address string, autoDelete bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.primaryIPs[name] = &cloud.PrimaryIP{ID: c.id(), Name: name, IP: netip.MustParseAddr(address), AutoDelete: autoDelete, Location: "fsn1"}
+}
+
+// AssignPrimaryIP marks a Primary IP as assigned to some server.
+func (c *Cloud) AssignPrimaryIP(name string, serverID int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.primaryIPs[name].AssigneeID = serverID
+}
+
+// PrimaryIPv4 implements cloud.Cloud.
+func (c *Cloud) PrimaryIPv4(_ context.Context, name string) (*cloud.PrimaryIP, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.Err != nil {
+		return nil, c.Err
+	}
+	ip, ok := c.primaryIPs[name]
+	if !ok {
+		return nil, fmt.Errorf("primary IP %s: %w", name, cloud.ErrNotFound)
+	}
+	found := *ip
+	return &found, nil
 }
 
 // NetworkID implements cloud.Cloud.
@@ -282,6 +313,22 @@ func (c *Cloud) CreateServer(_ context.Context, spec *cloud.ServerSpec) (*cloud.
 	if spec.EnableIPv4 {
 		server.PublicIPv4 = netip.AddrFrom4([4]byte{203, 0, 113, n})
 	}
+	if spec.PrimaryIPv4ID != 0 {
+		var primary *cloud.PrimaryIP
+		for _, ip := range c.primaryIPs {
+			if ip.ID == spec.PrimaryIPv4ID {
+				primary = ip
+			}
+		}
+		switch {
+		case primary == nil:
+			return nil, fmt.Errorf("primary IP %d: %w", spec.PrimaryIPv4ID, cloud.ErrNotFound)
+		case primary.AssigneeID != 0:
+			return nil, fmt.Errorf("primary IP %s: %w", primary.Name, cloud.ErrInUse)
+		}
+		primary.AssigneeID = id
+		server.PublicIPv4 = primary.IP
+	}
 	if spec.EnableIPv6 {
 		server.PublicIPv6 = netip.MustParseAddr(fmt.Sprintf("2001:db8:%x::1", id))
 	}
@@ -306,6 +353,17 @@ func (c *Cloud) DeleteServer(_ context.Context, id int64) error {
 	}
 	if server, ok := c.servers[id]; ok && c.OnDelete != nil {
 		c.OnDelete(server.Name)
+	}
+	// As at Hetzner: the address is detached, or goes with the server.
+	for name, ip := range c.primaryIPs {
+		if ip.AssigneeID != id {
+			continue
+		}
+		if ip.AutoDelete {
+			delete(c.primaryIPs, name)
+		} else {
+			ip.AssigneeID = 0
+		}
 	}
 	delete(c.servers, id)
 	return nil

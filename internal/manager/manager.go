@@ -19,9 +19,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -55,6 +57,11 @@ type Config struct {
 	LogLevel                string
 	LogFormat               string
 	ShowVersion             bool
+	// AllowDuplicateControllers lets a process run the same manager more
+	// than once, which controller-runtime refuses by default because their
+	// metrics would collide. It is for tests that start the managers once
+	// per test; there is no flag for it.
+	AllowDuplicateControllers bool
 }
 
 // ParseFlags reads a manager's command line.
@@ -183,6 +190,9 @@ func Start(ctx context.Context, def *Definition, cfg *Config, restConfig *rest.C
 				DisableFor: []client.Object{&corev1.Secret{}, &corev1.ConfigMap{}},
 			},
 		},
+	}
+	if cfg.AllowDuplicateControllers {
+		options.Controller = config.Controller{SkipNameValidation: ptr.To(true)}
 	}
 	if cfg.Namespace != "" {
 		options.Cache = cache.Options{DefaultNamespaces: map[string]cache.Config{cfg.Namespace: {}}}

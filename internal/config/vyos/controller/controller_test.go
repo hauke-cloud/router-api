@@ -700,3 +700,116 @@ func TestTheAPIRejectsWhatMustNotReachARouter(t *testing.T) {
 		})
 	}
 }
+
+// inSlot puts the fixture's router into a slot.
+func (f *fixture) inSlot(router, slot string) {
+	f.t.Helper()
+	owner := &corev1alpha1.Router{}
+	if err := k8s.Get(f.ctx, f.key(router), owner); err != nil {
+		f.t.Fatal(err)
+	}
+	owner.Labels[corev1alpha1.SlotLabel] = slot
+	if err := k8s.Update(f.ctx, owner); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func TestEverySlotHasItsOwnValues(t *testing.T) {
+	f := newFixture(t)
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "wg-1", Namespace: f.namespace},
+		Data:       map[string][]byte{"key": []byte("xo2pQF7WbTFQkAOgNi6s9RNdu1uEhn2wGYOvUkb7HBg=")},
+	}
+	if err := k8s.Create(f.ctx, secret); err != nil {
+		t.Fatal(err)
+	}
+	f.inSlot("edge", "1")
+	f.updateConfig(func(config *configv1alpha1.VyOSConfig) {
+		config.Spec.Commands = `set system time-zone {{ .Values.zone }}
+set interfaces wireguard wg0 address {{ .Values.tunnel }}
+set interfaces wireguard wg0 private-key {{ .Values.key }}
+set interfaces wireguard wg0 description 'slot {{ .Router.Slot }}'
+`
+		config.Spec.Values = []configv1alpha1.Value{
+			{Name: "zone", ValueSource: configv1alpha1.ValueSource{Value: ptr.To("UTC")}},
+			{Name: "tunnel", ValueSource: configv1alpha1.ValueSource{Value: ptr.To("overridden in every slot")}},
+		}
+		config.Spec.Slots = []configv1alpha1.SlotSpec{
+			{Values: []configv1alpha1.Value{
+				{Name: "tunnel", ValueSource: configv1alpha1.ValueSource{Value: ptr.To("10.99.0.1/30")}},
+				{Name: "key", ValueSource: configv1alpha1.ValueSource{Value: ptr.To("key-of-slot-0")}},
+			}},
+			{Values: []configv1alpha1.Value{
+				{Name: "tunnel", ValueSource: configv1alpha1.ValueSource{Value: ptr.To("10.99.0.5/30")}},
+				{Name: "key", ValueSource: configv1alpha1.ValueSource{SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: "wg-1"}, Key: "key",
+				}}},
+			}},
+		}
+	})
+	f.boot()
+
+	f.reconcile()
+
+	for _, want := range []string{
+		"set system time-zone UTC",
+		"set interfaces wireguard wg0 address 10.99.0.5/30",
+		"set interfaces wireguard wg0 private-key xo2pQF7WbTFQkAOgNi6s9RNdu1uEhn2wGYOvUkb7HBg=",
+		"set interfaces wireguard wg0 description 'slot 1'",
+	} {
+		if !f.running(want) {
+			t.Errorf("the router does not run %q; ConfigApplied = %s; running = %q",
+				want, f.condition(corev1alpha1.ConfigAppliedCondition), f.router.Running())
+		}
+	}
+}
+
+func TestASlotWithoutValuesIsAnError(t *testing.T) {
+	f := newFixture(t)
+	f.inSlot("edge", "2")
+	f.updateConfig(func(config *configv1alpha1.VyOSConfig) {
+		config.Spec.Slots = []configv1alpha1.SlotSpec{{}, {}}
+	})
+	f.boot()
+	before := f.router.Running()
+
+	f.reconcile()
+
+	// A third router configured with nobody's values, or the first slot's,
+	// would come up as a second copy of another router.
+	if got := f.condition(corev1alpha1.ConfigAppliedCondition); got != "False/"+ReasonRenderFailed {
+		t.Errorf("ConfigApplied = %s", got)
+	}
+	if !slices.Equal(f.router.Running(), before) {
+		t.Error("the router was configured anyway")
+	}
+}
+
+func TestPeersCarryTheirSlot(t *testing.T) {
+	f := newFixture(t)
+	peer := &corev1alpha1.Router{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "edge-peer", Namespace: f.namespace,
+			Labels: map[string]string{corev1alpha1.DeploymentNameLabel: "edge", corev1alpha1.SlotLabel: "0"},
+		},
+		Spec: corev1alpha1.RouterSpec{
+			MachineRef: corev1alpha1.LocalObjectReference{Name: "edge-peer"},
+			ConfigRef:  corev1alpha1.ContractReference{APIGroup: configv1alpha1.GroupVersion.Group, Kind: "VyOSConfig", Name: "edge-peer"},
+		},
+	}
+	if err := k8s.Create(f.ctx, peer); err != nil {
+		t.Fatal(err)
+	}
+	f.setAddress("edge-peer", "203.0.113.8", "10.0.1.3")
+	f.inSlot("edge", "1")
+	f.updateConfig(func(config *configv1alpha1.VyOSConfig) {
+		config.Spec.Commands = "{{ range .Peers }}set system static-host-mapping host-name slot-{{ .Slot }} inet {{ .InternalIP }}\n{{ end }}"
+	})
+	f.boot()
+
+	f.reconcile()
+
+	if !f.running("set system static-host-mapping host-name slot-0 inet 10.0.1.3") {
+		t.Errorf("running = %q", f.router.Running())
+	}
+}

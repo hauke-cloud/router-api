@@ -63,8 +63,13 @@ func Objects(name string) ([]*unstructured.Unstructured, error) {
 // a router of a pair would have.
 func SampleData(spec *configv1alpha1.VyOSConfigSpec) *render.Data {
 	values := map[string]string{}
-	for i := range spec.Values {
-		value := &spec.Values[i]
+	// The shared values, and over them those of slot 0.
+	all := spec.Values
+	if len(spec.Slots) > 0 {
+		all = append(append([]configv1alpha1.Value{}, all...), spec.Slots[0].Values...)
+	}
+	for i := range all {
+		value := &all[i]
 		switch {
 		case value.Value != nil:
 			values[value.Name] = *value.Value
@@ -85,7 +90,7 @@ func SampleData(spec *configv1alpha1.VyOSConfigSpec) *render.Data {
 		Values:  values,
 		Router:  render.Router{Name: "edge-abc12", Namespace: "routers", Group: "edge"},
 		Machine: render.Machine{ExternalIP: "203.0.113.7", InternalIP: "10.0.1.2"},
-		Peers:   []render.Peer{{Name: "edge-def34", ExternalIP: "203.0.113.8", InternalIP: "10.0.1.3"}},
+		Peers:   []render.Peer{{Name: "edge-def34", Slot: 1, ExternalIP: "203.0.113.8", InternalIP: "10.0.1.3"}},
 		Host:    render.Host{PublicInterface: "eth0", PrivateInterface: "eth1"},
 	}
 }

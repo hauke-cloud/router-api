@@ -3,10 +3,14 @@ kind: RouterDeployment
 metadata:
   name: edge
 spec:
-  # Two routers, one active. With the default strategy (maxSurge 1,
-  # maxUnavailable 0) a replacement is built and proven before the router it
-  # replaces is asked to hand over.
+  # Two routers, one active, each in a slot of its own: slot 0 and slot 1.
+  # What belongs to a slot (machine.yaml, config.yaml) stays when its router
+  # is replaced. The price is that a router is replaced in place: it hands
+  # over and is removed before its successor is built, and the group runs on
+  # one router meanwhile.
   replicas: 2
+  strategy:
+    type: Slots
   # How long a router has to stay ready before it counts. Give VRRP and BGP
   # time to settle.
   minReadySeconds: 60

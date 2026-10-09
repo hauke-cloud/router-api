@@ -33,6 +33,20 @@ the VRRP state), the VyOS version, and when the configuration was last changed.
 | hold everything | `spec.paused: true` on the deployment | no rollouts; existing routers stay managed |
 | hands off one object | annotation `router.hauke.cloud/paused` | no controller acts on it |
 
+How routers are replaced is the deployment's `strategy.type`:
+
+| | `Surge` (default) | `Slots` |
+| --- | --- | --- |
+| A replacement | is built and has to work before the old router goes | is built after the old router is gone |
+| During a rollout | never fewer routers than asked for, one more at times | one router fewer, never more |
+| Routers | interchangeable | each in a slot that keeps its address and its values |
+| Use it when | everything that identifies the group can move between routers | each router needs something that stays, such as an address the other side dials |
+
+Either way a working router is asked to hand over before it is removed, so
+replacing the active one is a failover it announces, not one the others have to
+detect. With slots, `kubectl get routers -L router.hauke.cloud/slot` shows who
+is where.
+
 Watch a rollout with `kubectl get rd,rs,rt -w`. A deployment's `RollingOut` condition is true
 until every router is of the current revision, available, and runs the current configuration.
 
