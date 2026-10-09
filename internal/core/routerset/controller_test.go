@@ -564,3 +564,150 @@ func TestGoneSet(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// withSlots turns the fixture's set into one of a group with slots.
+func (f *fixture) withSlots(slots int32) {
+	f.t.Helper()
+	set := f.set()
+	set.Spec.Slots = ptr.To(slots)
+	if err := k8s.Update(f.ctx, set); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func slotsOf(routers []corev1alpha1.Router) []string {
+	out := make([]string, len(routers))
+	for i := range routers {
+		out[i] = routers[i].Labels[corev1alpha1.SlotLabel]
+	}
+	slices.Sort(out)
+	return out
+}
+
+func TestSlotsAreAssigned(t *testing.T) {
+	f := newFixture(t, 2)
+	f.withSlots(2)
+
+	f.reconcile()
+
+	routers := f.routers()
+	if got := slotsOf(routers); !slices.Equal(got, []string{"0", "1"}) {
+		t.Fatalf("slots = %v, want 0 and 1", got)
+	}
+	// Providers read the slot from their own object.
+	for i := range routers {
+		slot := routers[i].Labels[corev1alpha1.SlotLabel]
+		for _, object := range []client.Object{&corev1alpha1.RouterMachine{}, &infrav1alpha1.HetznerMachine{}, &configv1alpha1.VyOSConfig{}} {
+			if err := k8s.Get(f.ctx, types.NamespacedName{Namespace: f.namespace, Name: routers[i].Name}, object); err != nil {
+				t.Fatal(err)
+			}
+			if got := object.GetLabels()[corev1alpha1.SlotLabel]; got != slot {
+				t.Errorf("%T of slot %s is labelled slot %q", object, slot, got)
+			}
+		}
+	}
+}
+
+func TestAReplacementTakesTheSlotOfItsPredecessor(t *testing.T) {
+	f := newFixture(t, 2)
+	f.withSlots(2)
+	routers := f.allReady()
+	var gone *corev1alpha1.Router
+	for i := range routers {
+		if routers[i].Labels[corev1alpha1.SlotLabel] == "0" {
+			gone = &routers[i]
+		}
+	}
+
+	// The router in slot 0 is deleted, by the health check say, and its
+	// server takes a while to go: the Router object lingers.
+	gone.Finalizers = append(gone.Finalizers, corev1alpha1.RouterFinalizer)
+	if err := k8s.Update(f.ctx, gone); err != nil {
+		t.Fatal(err)
+	}
+	if err := k8s.Delete(f.ctx, gone); err != nil {
+		t.Fatal(err)
+	}
+	f.reconcile()
+	f.reconcile()
+
+	// What belongs to slot 0, its address above all, is still attached to
+	// the old server. A successor now would be a second router in slot 0.
+	if got := f.routers(); len(got) != 1 {
+		t.Fatalf("%d routers: a successor was created while the slot is still occupied", len(got))
+	}
+
+	// The server is gone.
+	if err := k8s.Get(f.ctx, types.NamespacedName{Namespace: f.namespace, Name: gone.Name}, gone); err != nil {
+		t.Fatal(err)
+	}
+	gone.Finalizers = nil
+	if err := k8s.Update(f.ctx, gone); err != nil {
+		t.Fatal(err)
+	}
+	f.reconcile()
+
+	routers = f.routers()
+	if got := slotsOf(routers); !slices.Equal(got, []string{"0", "1"}) {
+		t.Fatalf("slots = %v, want the successor in slot 0", got)
+	}
+	for i := range routers {
+		if routers[i].Name == gone.Name {
+			t.Error("the successor has the name of its predecessor: their Secrets would be mixed up")
+		}
+	}
+}
+
+func TestSlotsHeldByAnotherSetAreNotTaken(t *testing.T) {
+	f := newFixture(t, 1)
+	f.withSlots(2)
+	// A router of the same group, from the set of another revision, sits in
+	// slot 0.
+	other := &corev1alpha1.Router{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "other-revision", Namespace: f.namespace,
+			Labels: map[string]string{corev1alpha1.DeploymentNameLabel: "edge", corev1alpha1.SlotLabel: "0"},
+		},
+		Spec: corev1alpha1.RouterSpec{
+			MachineRef: corev1alpha1.LocalObjectReference{Name: "other-revision"},
+			ConfigRef:  corev1alpha1.ContractReference{APIGroup: configv1alpha1.GroupVersion.Group, Kind: "VyOSConfig", Name: "other-revision"},
+		},
+	}
+	if err := k8s.Create(f.ctx, other); err != nil {
+		t.Fatal(err)
+	}
+
+	f.reconcile()
+
+	var mine []corev1alpha1.Router
+	for _, router := range f.routers() {
+		if router.Name != "other-revision" {
+			mine = append(mine, router)
+		}
+	}
+	if got := slotsOf(mine); !slices.Equal(got, []string{"1"}) {
+		t.Errorf("slots = %v, want 1: slot 0 belongs to a router of another revision", got)
+	}
+}
+
+func TestScaleDownFreesTheHighestSlot(t *testing.T) {
+	f := newFixture(t, 3)
+	f.withSlots(3)
+	routers := f.allReady()
+	for i := range routers {
+		f.setDrained(routers[i].Name)
+	}
+
+	// The group shrinks to two slots.
+	set := f.set()
+	set.Spec.Replicas, set.Spec.Slots = ptr.To(int32(2)), ptr.To(int32(2))
+	if err := k8s.Update(f.ctx, set); err != nil {
+		t.Fatal(err)
+	}
+	f.reconcile()
+	f.reconcile()
+
+	if got := slotsOf(f.routers()); !slices.Equal(got, []string{"0", "1"}) {
+		t.Errorf("slots = %v, want 0 and 1 to remain", got)
+	}
+}

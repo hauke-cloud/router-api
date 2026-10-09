@@ -122,6 +122,15 @@ spec:
                     type: object
                 type: object
                 x-kubernetes-map-type: atomic
+              slots:
+                description: |-
+                  Slots, if set, is the number of slots of the group this set belongs
+                  to. Every router the set creates is then given a free slot below this
+                  number, and none is created while there is no free one. A slot is
+                  free once the Router that held it is gone, server and all.
+                format: int32
+                minimum: 0
+                type: integer
               template:
                 description: Template of the routers.
                 properties:

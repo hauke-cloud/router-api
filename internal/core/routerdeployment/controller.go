@@ -222,15 +222,16 @@ func (r *Reconciler) templateHash(ctx context.Context, deployment *corev1alpha1.
 // sets up to date.
 func (r *Reconciler) currentSet(ctx context.Context, deployment *corev1alpha1.RouterDeployment, sets []*corev1alpha1.RouterSet, hash string) (current *corev1alpha1.RouterSet, all []*corev1alpha1.RouterSet, err error) {
 	minReady := ptr.Deref(deployment.Spec.MinReadySeconds, 0)
+	slots := slotsOf(deployment)
 	highest := 0
 	for _, set := range sets {
 		highest = max(highest, revision(set))
 		if set.Labels[corev1alpha1.TemplateHashLabel] == hash {
 			current = set
 		}
-		if set.Spec.MinReadySeconds != minReady {
+		if set.Spec.MinReadySeconds != minReady || !equality.Semantic.DeepEqual(set.Spec.Slots, slots) {
 			original := set.DeepCopy()
-			set.Spec.MinReadySeconds = minReady
+			set.Spec.MinReadySeconds, set.Spec.Slots = minReady, slots
 			if err := r.Patch(ctx, set, client.MergeFrom(original)); err != nil {
 				return nil, nil, err
 			}
@@ -271,6 +272,7 @@ func (r *Reconciler) currentSet(ctx context.Context, deployment *corev1alpha1.Ro
 			Replicas:        ptr.To(int32(0)),
 			Selector:        *selector,
 			MinReadySeconds: minReady,
+			Slots:           slots,
 			Template: corev1alpha1.RouterTemplateSpec{
 				ObjectMeta: corev1alpha1.ObjectMeta{Labels: templateLabels, Annotations: deployment.Spec.Template.Annotations},
 				Spec:       deployment.Spec.Template.Spec,
@@ -345,8 +347,22 @@ func (r *Reconciler) roll(ctx context.Context, deployment *corev1alpha1.RouterDe
 	return nil
 }
 
+// slotsOf returns the number of slots of a deployment that uses them: one per
+// replica.
+func slotsOf(deployment *corev1alpha1.RouterDeployment) *int32 {
+	if deployment.Spec.Strategy.Type != corev1alpha1.SlotsStrategy {
+		return nil
+	}
+	return ptr.To(ptr.Deref(deployment.Spec.Replicas, 1))
+}
+
 // bounds resolves maxSurge and maxUnavailable to numbers of routers.
 func bounds(deployment *corev1alpha1.RouterDeployment, want int32) (surge, unavailable int32) {
+	if deployment.Spec.Strategy.Type == corev1alpha1.SlotsStrategy {
+		// There is no slot for an extra router, so a router has to go
+		// before its successor can come: one at a time is unavailable.
+		return 0, min(1, want)
+	}
 	rolling := deployment.Spec.Strategy.RollingUpdate
 	// Surge rounds up and unavailable rounds down, both towards safety.
 	s, err := intstr.GetScaledValueFromIntOrPercent(ptr.To(ptr.Deref(rolling.MaxSurge, intstr.FromInt32(1))), int(want), true)

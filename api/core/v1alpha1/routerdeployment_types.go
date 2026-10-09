@@ -21,10 +21,35 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-// RouterDeploymentStrategy says how routers are replaced.
+// RouterDeploymentStrategyType is the way routers are replaced.
+// +kubebuilder:validation:Enum=Surge;Slots
+type RouterDeploymentStrategyType string
+
+const (
+	// SurgeStrategy builds a replacement before it takes a router away. The
+	// group is never short, and its routers are interchangeable: whatever
+	// identifies the group to the outside has to be able to move between
+	// them.
+	SurgeStrategy RouterDeploymentStrategyType = "Surge"
+	// SlotsStrategy gives every router a slot, 0 up to replicas-1, that
+	// survives its replacement, so that each router can have something of
+	// its own that stays: a public address, a key, a tunnel. A router is
+	// replaced in its slot, which means it is removed before its successor
+	// is built, and the group is one router short meanwhile.
+	SlotsStrategy RouterDeploymentStrategyType = "Slots"
+)
+
+// RouterDeploymentStrategy says how routers are replaced. Either way it is
+// one after the other: replacing every router at once is never what a router
+// group wants.
 type RouterDeploymentStrategy struct {
-	// RollingUpdate parameters. Rolling is the only strategy: replacing every
-	// router at once is never what a router group wants.
+	// Type of the strategy.
+	// +kubebuilder:default=Surge
+	// +optional
+	Type RouterDeploymentStrategyType `json:"type,omitempty"`
+	// RollingUpdate parameters of the Surge strategy. With Slots they are
+	// not used: there is no slot for an extra router, and one router at a
+	// time is unavailable.
 	// +optional
 	RollingUpdate RollingUpdate `json:"rollingUpdate,omitempty"`
 }

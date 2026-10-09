@@ -440,3 +440,95 @@ func TestHistoryIsTrimmed(t *testing.T) {
 		t.Errorf("newest revision = %d, want 4", revision(&sets[1]))
 	}
 }
+
+func (f *fixture) useSlots() {
+	f.t.Helper()
+	deployment := f.deployment()
+	deployment.Spec.Strategy.Type = corev1alpha1.SlotsStrategy
+	if err := k8s.Update(f.ctx, deployment); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func TestSlotsStrategyReplacesInPlace(t *testing.T) {
+	f := newFixture(t, 2, "h1")
+	f.useSlots()
+	f.reconcile()
+	f.settle(0, -1)
+	f.reconcile()
+
+	sets := f.sets()
+	if got := ptr.Deref(sets[0].Spec.Slots, -1); got != 2 {
+		t.Fatalf("slots of the set = %d, want the deployment's 2 replicas", got)
+	}
+
+	f.changeServerType("cx33")
+
+	// A slot holds one router. Its successor can only be built once it is
+	// gone, so the order is the reverse of the Surge strategy's: take one
+	// away, build one, and never more than two exist.
+	// Each step: what the deployment asks for, and then how the sets look
+	// when it next looks.
+	steps := []struct {
+		want         string
+		why          string
+		oldExisting  int32 // routers the old set then has, -1 for as many as it asks for
+		newAvailable int32
+	}{
+		{"1,0", "one old router is taken out; nothing new can be built yet", 2, 0},
+		{"1,0", "it is still handing over: its slot is not free", -1, 0},
+		{"1,1", "it is gone, its successor is built", -1, 0},
+		{"1,1", "the successor is not available yet: the last old router stays", -1, 1},
+		{"0,1", "the successor works, the second old router is taken out", -1, 1},
+		{"0,2", "and replaced", -1, 2},
+	}
+	for i, step := range steps {
+		f.reconcile()
+		if got := f.replicas(); got != step.want {
+			t.Fatalf("step %d: replicas = %s, want %s (%s)", i, got, step.want, step.why)
+		}
+		f.settle(2, step.newAvailable)
+		if step.oldExisting >= 0 {
+			sets := f.sets()
+			old := &sets[0]
+			old.Status.Replicas = step.oldExisting
+			if err := k8s.Status().Update(f.ctx, old); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, set := range f.sets() {
+		if got := ptr.Deref(set.Spec.Slots, -1); got != 2 {
+			t.Errorf("slots of set %s = %d", set.Name, got)
+		}
+	}
+}
+
+func TestSlotsFollowTheReplicas(t *testing.T) {
+	f := newFixture(t, 2, "h1")
+	f.useSlots()
+	f.reconcile()
+	f.settle(0, -1)
+
+	deployment := f.deployment()
+	deployment.Spec.Replicas = ptr.To(int32(3))
+	if err := k8s.Update(f.ctx, deployment); err != nil {
+		t.Fatal(err)
+	}
+	f.reconcile()
+
+	if got := ptr.Deref(f.sets()[0].Spec.Slots, -1); got != 3 {
+		t.Errorf("slots = %d, want 3", got)
+	}
+	if got := f.replicas(); got != "3" {
+		t.Errorf("replicas = %s", got)
+	}
+}
+
+func TestSurgeStrategyHasNoSlots(t *testing.T) {
+	f := newFixture(t, 2, "h1")
+	f.reconcile()
+	if slots := f.sets()[0].Spec.Slots; slots != nil {
+		t.Errorf("slots = %d for a deployment that does not use them", *slots)
+	}
+}

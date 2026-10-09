@@ -28,6 +28,13 @@ const (
 	SetNameLabel = "router.hauke.cloud/set-name"
 	// RouterNameLabel is set on the objects that make up one router.
 	RouterNameLabel = "router.hauke.cloud/router-name"
+	// SlotLabel is the slot of a router within its group, "0", "1", ...,
+	// on the Router and on everything that belongs to it. Only groups whose
+	// strategy is Slots have it. A slot outlives the router that holds it:
+	// the replacement of the router in slot 1 is again the router in slot 1,
+	// and providers hang on it whatever must not change with a replacement,
+	// such as a public address or a key.
+	SlotLabel = "router.hauke.cloud/slot"
 	// TemplateHashLabel carries the hash of the template a RouterSet was
 	// created from, the way pod-template-hash does for a ReplicaSet.
 	TemplateHashLabel = "router.hauke.cloud/template-hash"

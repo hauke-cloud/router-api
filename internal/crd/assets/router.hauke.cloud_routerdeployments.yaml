@@ -141,8 +141,9 @@ spec:
                 properties:
                   rollingUpdate:
                     description: |-
-                      RollingUpdate parameters. Rolling is the only strategy: replacing every
-                      router at once is never what a router group wants.
+                      RollingUpdate parameters of the Surge strategy. With Slots they are
+                      not used: there is no slot for an extra router, and one router at a
+                      time is unavailable.
                     properties:
                       maxSurge:
                         anyOf:
@@ -164,6 +165,13 @@ spec:
                           is only taken out of service once its replacement is available.
                         x-kubernetes-int-or-string: true
                     type: object
+                  type:
+                    default: Surge
+                    description: Type of the strategy.
+                    enum:
+                    - Surge
+                    - Slots
+                    type: string
                 type: object
               template:
                 description: Template of the routers.

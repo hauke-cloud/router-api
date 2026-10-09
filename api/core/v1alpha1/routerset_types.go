@@ -68,6 +68,13 @@ type RouterSetSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	// +optional
 	MinReadySeconds int32 `json:"minReadySeconds,omitempty"`
+	// Slots, if set, is the number of slots of the group this set belongs
+	// to. Every router the set creates is then given a free slot below this
+	// number, and none is created while there is no free one. A slot is
+	// free once the Router that held it is gone, server and all.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	Slots *int32 `json:"slots,omitempty"`
 }
 
 // RouterSetStatus is the observed state of a RouterSet.
