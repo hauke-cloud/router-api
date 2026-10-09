@@ -144,6 +144,17 @@ func (c *Cloud) Firewall(name string) *Firewall {
 	return c.firewalls[name]
 }
 
+// FirewallRules returns a copy of the named firewall's rules, for a test that
+// reads them while controllers run.
+func (c *Cloud) FirewallRules(name string) []cloud.FirewallRule {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if firewall := c.firewalls[name]; firewall != nil {
+		return slices.Clone(firewall.Rules)
+	}
+	return nil
+}
+
 // PlacementGroups returns the names of the placement groups.
 func (c *Cloud) PlacementGroups() []string {
 	c.mu.Lock()

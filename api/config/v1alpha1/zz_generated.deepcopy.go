@@ -21,6 +21,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1alpha1 "github.com/hauke-cloud/router-api/api/core/v1alpha1"
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -237,6 +238,18 @@ func (in *VyOSConfigSpec) DeepCopyInto(out *VyOSConfigSpec) {
 	if in.Slots != nil {
 		in, out := &in.Slots, &out.Slots
 		*out = make([]SlotSpec, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+	if in.ExposureRef != nil {
+		in, out := &in.ExposureRef, &out.ExposureRef
+		*out = new(corev1alpha1.LocalObjectReference)
+		**out = **in
+	}
+	if in.Exposed != nil {
+		in, out := &in.Exposed, &out.Exposed
+		*out = make([]corev1alpha1.ExposedEndpoint, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}

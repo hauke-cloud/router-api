@@ -55,6 +55,12 @@ spec:
             - name: tunnelRemote
               value: 10.99.0.6
 
+      # The addresses and ports of the Gateways that ask to be exposed
+      # (exposure.yaml), as .Exposed in the commands below. A change of them
+      # reaches the routers like a change of the commands: the standby first.
+      exposureRef:
+        name: edge
+
       # Placed below /config when a router is created. A change replaces the
       # routers. These two are what hcloud-vrrp-failover reads when a router
       # becomes VRRP master.
@@ -164,14 +170,27 @@ spec:
         set firewall ipv4 input filter rule 60 action accept
         set firewall ipv4 input filter rule 60 description 'everything from the lab'
         set firewall ipv4 input filter rule 60 inbound-interface name wg0
-        # Through the router: to the lab's public addresses, and whatever the
-        # lab sends.
+        # Through the router: whatever the lab sends, and from the internet
+        # exactly what the Gateways listen on. .Exposed has one entry per
+        # address and protocol; the ones with an IPv6 address are left out
+        # because only IPv4 is routed to the lab here.
         set firewall ipv4 forward filter default-action drop
         set firewall ipv4 forward filter rule 10 action accept
         set firewall ipv4 forward filter rule 10 state established
         set firewall ipv4 forward filter rule 10 state related
         set firewall ipv4 forward filter rule 20 action accept
+        set firewall ipv4 forward filter rule 20 description 'ping to the lab'
         set firewall ipv4 forward filter rule 20 destination address {{ .Values.servicePrefix }}
+        set firewall ipv4 forward filter rule 20 protocol icmp
+        {{- range $i, $e := .Exposed }}
+        {{- if eq $e.Family "ipv4" }}
+        set firewall ipv4 forward filter rule {{ add 100 $i }} action accept
+        set firewall ipv4 forward filter rule {{ add 100 $i }} description 'exposed by a gateway'
+        set firewall ipv4 forward filter rule {{ add 100 $i }} destination address {{ $e.Address }}
+        set firewall ipv4 forward filter rule {{ add 100 $i }} destination port {{ $e.Ports }}
+        set firewall ipv4 forward filter rule {{ add 100 $i }} protocol {{ $e.Protocol }}
+        {{- end }}
+        {{- end }}
         set firewall ipv4 forward filter rule 30 action accept
         set firewall ipv4 forward filter rule 30 inbound-interface name wg0
 

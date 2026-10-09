@@ -136,8 +136,8 @@ type HostSpec struct {
 // VyOSConfigSpec describes a VyOS router: what it boots and what it runs.
 //
 // Image, Files and Host go into the data the instance is created with, so a
-// change to them replaces the router. Commands, Values and Management are
-// applied to the running router.
+// change to them replaces the router. Commands, Values, Exposed and
+// Management are applied to the running router.
 type VyOSConfigSpec struct {
 	// Image is the VyOS container image, by digest for a reproducible router.
 	// It is written into a systemd unit file on the host, so it is held to
@@ -168,6 +168,21 @@ type VyOSConfigSpec struct {
 	// +listType=atomic
 	// +optional
 	Slots []SlotSpec `json:"slots,omitempty"`
+	// ExposureRef names a RouterExposure in the same namespace. Core hands
+	// what it lists to the routers of a group as Exposed, one router at a
+	// time like any other change of the configuration: the standby first,
+	// the active router last, and no further than a router that refuses it.
+	// +optional
+	ExposureRef *corev1alpha1.LocalObjectReference `json:"exposureRef,omitempty"`
+	// Exposed is available to Commands as {{ .Exposed }}. With ExposureRef
+	// set it is filled in by core on every VyOSConfig, and whatever a
+	// template says here is replaced; a router that has not been handed a
+	// list yet is not configured, rather than configured with nothing open.
+	// Without ExposureRef it is a list kept by hand.
+	// +kubebuilder:validation:MaxItems=1024
+	// +listType=atomic
+	// +optional
+	Exposed []corev1alpha1.ExposedEndpoint `json:"exposed,omitempty"`
 	// Files placed below /config at first boot.
 	// +listType=map
 	// +listMapKey=path

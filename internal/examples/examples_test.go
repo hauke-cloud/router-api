@@ -59,7 +59,7 @@ func TestHomeLabIsAccepted(t *testing.T) {
 		}
 		kinds[object.GetKind()]++
 	}
-	for _, kind := range []string{"HetznerRouterNetwork", "HetznerMachineTemplate", "VyOSConfigTemplate", "RouterDeployment", "RouterHealthCheck"} {
+	for _, kind := range []string{"HetznerRouterNetwork", "HetznerMachineTemplate", "VyOSConfigTemplate", "RouterDeployment", "RouterHealthCheck", "RouterExposure"} {
 		if kinds[kind] == 0 {
 			t.Errorf("the example has no %s", kind)
 		}

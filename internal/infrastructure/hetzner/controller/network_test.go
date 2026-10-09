@@ -200,3 +200,117 @@ func TestNetworkDeletionWaitsForServers(t *testing.T) {
 		t.Errorf("the network object still exists: %v", err)
 	}
 }
+
+// expose creates a RouterExposure named edge, makes the network's firewall
+// follow it and plays the core controller: the given ports are its status.
+func (f *fixture) expose(ports ...corev1alpha1.ExposedPort) {
+	f.t.Helper()
+	exposure := &corev1alpha1.RouterExposure{ObjectMeta: metav1.ObjectMeta{Name: "edge", Namespace: f.namespace}}
+	if err := k8s.Create(f.ctx, exposure); err != nil {
+		f.t.Fatal(err)
+	}
+	if ports != nil {
+		exposure.Status.Ports = ports
+		exposure.Status.ObservedGeneration = exposure.Generation
+		if err := k8s.Status().Update(f.ctx, exposure); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+	network := f.net()
+	network.Spec.Firewall.ExposureRef = &corev1alpha1.LocalObjectReference{Name: "edge"}
+	if err := k8s.Update(f.ctx, network); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func TestFirewallFollowsTheExposure(t *testing.T) {
+	f := newFixture(t)
+	f.expose(
+		corev1alpha1.ExposedPort{Protocol: corev1alpha1.ExposedTCP, Port: 80},
+		corev1alpha1.ExposedPort{Protocol: corev1alpha1.ExposedTCP, Port: 443},
+		corev1alpha1.ExposedPort{Protocol: corev1alpha1.ExposedTCP, Port: 8000},
+		corev1alpha1.ExposedPort{Protocol: corev1alpha1.ExposedTCP, Port: 8001},
+		corev1alpha1.ExposedPort{Protocol: corev1alpha1.ExposedTCP, Port: 8002},
+		corev1alpha1.ExposedPort{Protocol: corev1alpha1.ExposedUDP, Port: 53},
+	)
+
+	f.reconcileNetwork()
+
+	network := f.net()
+	// The management rule and the configured rules first, as before, then
+	// the ports of the Gateways, a run of them as one range.
+	want := []string{
+		"tcp 443 192.0.2.0/24+198.51.100.7/32",
+		"udp 51820 0.0.0.0/0+::/0",
+		"icmp  0.0.0.0/0",
+		"tcp 80 0.0.0.0/0+::/0",
+		"tcp 443 0.0.0.0/0+::/0",
+		"tcp 8000-8002 0.0.0.0/0+::/0",
+		"udp 53 0.0.0.0/0+::/0",
+	}
+	if got := ruleStrings(f.cloud.Firewall(resourceName(network)).Rules); !slices.Equal(got, want) {
+		t.Errorf("rules = %q, want %q", got, want)
+	}
+	if !conditions.IsTrue(network.Status.Conditions, ExposureAppliedCondition) {
+		t.Errorf("%s = %+v", ExposureAppliedCondition, conditions.Get(network.Status.Conditions, ExposureAppliedCondition))
+	}
+
+	// A Gateway is gone: its port closes.
+	exposure := &corev1alpha1.RouterExposure{}
+	if err := k8s.Get(f.ctx, f.key("edge"), exposure); err != nil {
+		t.Fatal(err)
+	}
+	exposure.Status.Ports = exposure.Status.Ports[:2]
+	if err := k8s.Status().Update(f.ctx, exposure); err != nil {
+		t.Fatal(err)
+	}
+	f.reconcileNetwork()
+	if got := ruleStrings(f.cloud.Firewall(resourceName(network)).Rules); !slices.Equal(got, want[:5]) {
+		t.Errorf("rules = %q, want %q", got, want[:5])
+	}
+}
+
+// The operator's own way in, and what was configured by hand, must not
+// depend on a list of Gateways being there.
+func TestFirewallWithoutAnExposureToFollow(t *testing.T) {
+	static := []string{
+		"tcp 443 192.0.2.0/24+198.51.100.7/32",
+		"udp 51820 0.0.0.0/0+::/0",
+		"icmp  0.0.0.0/0",
+	}
+	t.Run("missing", func(t *testing.T) {
+		f := newFixture(t)
+		network := f.net()
+		network.Spec.Firewall.ExposureRef = &corev1alpha1.LocalObjectReference{Name: "nope"}
+		if err := k8s.Update(f.ctx, network); err != nil {
+			t.Fatal(err)
+		}
+		f.reconcileNetwork()
+
+		network = f.net()
+		if got := ruleStrings(f.cloud.Firewall(resourceName(network)).Rules); !slices.Equal(got, static) {
+			t.Errorf("rules = %q, want %q", got, static)
+		}
+		applied := conditions.Get(network.Status.Conditions, ExposureAppliedCondition)
+		if applied == nil || applied.Status != metav1.ConditionFalse || applied.Reason != ReasonExposureNotFound {
+			t.Errorf("%s = %+v", ExposureAppliedCondition, applied)
+		}
+		if !conditions.IsTrue(network.Status.Conditions, corev1alpha1.ReadyCondition) {
+			t.Error("Ready went False: routers would stop being created over a missing list of Gateways")
+		}
+	})
+	t.Run("not computed yet", func(t *testing.T) {
+		f := newFixture(t)
+		f.expose()
+		f.reconcileNetwork()
+
+		network := f.net()
+		if got := ruleStrings(f.cloud.Firewall(resourceName(network)).Rules); !slices.Equal(got, static) {
+			t.Errorf("rules = %q, want %q", got, static)
+		}
+		applied := conditions.Get(network.Status.Conditions, ExposureAppliedCondition)
+		if applied == nil || applied.Status != metav1.ConditionFalse || applied.Reason != ReasonExposureNotObserved {
+			t.Errorf("%s = %+v", ExposureAppliedCondition, applied)
+		}
+	})
+}

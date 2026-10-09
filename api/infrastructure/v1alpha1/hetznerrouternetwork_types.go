@@ -18,6 +18,8 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	corev1alpha1 "github.com/hauke-cloud/router-api/api/core/v1alpha1"
 )
 
 // HetznerRouterNetworkFinalizer keeps a HetznerRouterNetwork until the
@@ -96,6 +98,13 @@ type HetznerFirewall struct {
 	// +listType=atomic
 	// +optional
 	Rules []FirewallRule `json:"rules,omitempty"`
+	// ExposureRef names a RouterExposure in the same namespace. Every port
+	// in its status is opened, from everywhere, in addition to Rules. A
+	// Hetzner firewall cannot tell destination addresses apart, so a port
+	// one Gateway listens on is open towards all of them; the routers'
+	// own configuration can be exact.
+	// +optional
+	ExposureRef *corev1alpha1.LocalObjectReference `json:"exposureRef,omitempty"`
 }
 
 // HetznerNetworkAttachment names the existing Hetzner Cloud Network the
@@ -154,7 +163,7 @@ type HetznerRouterNetworkStatus struct {
 	// ObservedGeneration is the generation this status was computed from.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
-	// Conditions: Ready.
+	// Conditions: Ready, ManagementSourcesResolved, ExposureApplied.
 	// +listType=map
 	// +listMapKey=type
 	// +optional

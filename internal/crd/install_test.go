@@ -12,7 +12,7 @@ import (
 func TestDefinitionsAreSplitByGroup(t *testing.T) {
 	tests := map[string][]string{
 		corev1alpha1.GroupVersion.Group: {
-			"routerdeployments.router.hauke.cloud",
+			"routerdeployments.router.hauke.cloud", "routerexposures.router.hauke.cloud",
 			"routerhealthchecks.router.hauke.cloud",
 			"routermachines.router.hauke.cloud",
 			"routers.router.hauke.cloud",

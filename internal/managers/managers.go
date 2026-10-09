@@ -7,11 +7,13 @@ package managers
 import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	configv1alpha1 "github.com/hauke-cloud/router-api/api/config/v1alpha1"
 	corev1alpha1 "github.com/hauke-cloud/router-api/api/core/v1alpha1"
 	infrav1alpha1 "github.com/hauke-cloud/router-api/api/infrastructure/v1alpha1"
 	vyoscontroller "github.com/hauke-cloud/router-api/internal/config/vyos/controller"
+	"github.com/hauke-cloud/router-api/internal/core/exposure"
 	"github.com/hauke-cloud/router-api/internal/core/healthcheck"
 	"github.com/hauke-cloud/router-api/internal/core/router"
 	"github.com/hauke-cloud/router-api/internal/core/routerdeployment"
@@ -38,9 +40,10 @@ func setup(mgr ctrl.Manager, controllers ...controller) error {
 // Core is the manager of the provider-independent controllers.
 func Core() *manager.Definition {
 	return &manager.Definition{
-		Name:        "router-api-core",
-		Groups:      []string{corev1alpha1.GroupVersion.Group},
-		AddToScheme: []func(*runtime.Scheme) error{corev1alpha1.AddToScheme},
+		Name:   "router-api-core",
+		Groups: []string{corev1alpha1.GroupVersion.Group},
+		// Gateways are read, not served: the cluster brings the Gateway API.
+		AddToScheme: []func(*runtime.Scheme) error{corev1alpha1.AddToScheme, gatewayv1.Install},
 		Setup: func(mgr ctrl.Manager) error {
 			c := mgr.GetClient()
 			return setup(mgr,
@@ -49,6 +52,7 @@ func Core() *manager.Definition {
 				&routerset.Reconciler{Client: c},
 				&routerdeployment.Reconciler{Client: c},
 				&healthcheck.Reconciler{Client: c},
+				&exposure.Reconciler{Client: c},
 			)
 		},
 	}

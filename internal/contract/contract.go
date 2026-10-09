@@ -184,6 +184,17 @@ func IsConditionTrue(object *unstructured.Unstructured, conditionType string) bo
 	return condition.ObservedGeneration == 0 || condition.ObservedGeneration >= object.GetGeneration()
 }
 
+// ExposedField is the field of a config object's spec that core fills in with
+// the endpoints of the RouterExposure the spec refers to.
+const ExposedField = "exposed"
+
+// ExposureRef returns the name of the RouterExposure a config spec refers to
+// in exposureRef.name, or "".
+func ExposureRef(spec map[string]any) string {
+	name, _, _ := unstructured.NestedString(spec, "exposureRef", "name")
+	return name
+}
+
 // --- templates --------------------------------------------------------------
 
 // TemplateSpec returns a copy of spec.template.spec of a template.

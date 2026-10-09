@@ -19,14 +19,12 @@ spec:
         port: "51820"
       - description: ping
         protocol: icmp
-      # Everything for the lab's public addresses. What is actually reachable
-      # is decided in the lab, where the services are.
-      - description: lab services
-        protocol: tcp
-        port: any
-      - description: lab services
-        protocol: udp
-        port: any
+    # Everything else that is open is what the Gateways in the lab listen
+    # on (exposure.yaml). A Hetzner firewall cannot tell the lab's addresses
+    # apart, so a port is open towards all of them here; the routers
+    # themselves are exact (config.yaml).
+    exposureRef:
+      name: edge
   # For debugging on the host. The operator itself never uses SSH.
   sshKeys:
     - admin

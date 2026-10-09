@@ -10,10 +10,13 @@ import (
 	"strconv"
 
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	corev1alpha1 "github.com/hauke-cloud/router-api/api/core/v1alpha1"
@@ -43,7 +46,23 @@ type NetworkReconciler struct {
 func (r *NetworkReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&infrav1alpha1.HetznerRouterNetwork{}).
+		Watches(&corev1alpha1.RouterExposure{}, handler.EnqueueRequestsFromMapFunc(r.networksFor)).
 		Complete(r)
+}
+
+// networksFor returns the networks whose firewall follows a RouterExposure.
+func (r *NetworkReconciler) networksFor(ctx context.Context, exposure client.Object) []reconcile.Request {
+	list := &infrav1alpha1.HetznerRouterNetworkList{}
+	if err := r.List(ctx, list, client.InNamespace(exposure.GetNamespace())); err != nil {
+		return nil
+	}
+	var requests []reconcile.Request
+	for i := range list.Items {
+		if ref := list.Items[i].Spec.Firewall.ExposureRef; ref != nil && ref.Name == exposure.GetName() {
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
+		}
+	}
+	return requests
 }
 
 // Reconcile brings one HetznerRouterNetwork up to date.
@@ -115,8 +134,14 @@ func (r *NetworkReconciler) reconcileNormal(ctx context.Context, network *infrav
 		status.ManagementCIDRs[i] = source.String()
 	}
 
+	exposed, err := r.exposedPorts(ctx, network)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+
 	labels := map[string]string{ManagedByLabel: ManagedByValue, NetworkUIDLabel: string(network.UID)}
-	firewallID, err := hcloud.EnsureFirewall(ctx, resourceName(network), labels, firewallRules(network, sources))
+	rules := append(firewallRules(network, sources), exposedRules(exposed)...)
+	firewallID, err := hcloud.EnsureFirewall(ctx, resourceName(network), labels, rules)
 	if err != nil {
 		r.notReady(network, ReasonCloudError, err.Error())
 		return reconcile.Result{}, fmt.Errorf("ensure firewall: %w", err)
@@ -192,6 +217,70 @@ func (r *NetworkReconciler) managementSources(ctx context.Context, network *infr
 		return a.Bits() - b.Bits()
 	})
 	return slices.Compact(sources), hasHostnames
+}
+
+// exposedPorts returns the ports of the RouterExposure the firewall follows,
+// and records in ExposureApplied whether there was one to follow. Without
+// one the firewall is the management rule and the configured rules, never
+// nothing: the operator's own access does not depend on a list of Gateways.
+func (r *NetworkReconciler) exposedPorts(ctx context.Context, network *infrav1alpha1.HetznerRouterNetwork) ([]corev1alpha1.ExposedPort, error) {
+	status := &network.Status
+	ref := network.Spec.Firewall.ExposureRef
+	if ref == nil {
+		meta.RemoveStatusCondition(&status.Conditions, ExposureAppliedCondition)
+		return nil, nil
+	}
+	exposure := &corev1alpha1.RouterExposure{}
+	err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: ref.Name}, exposure)
+	switch {
+	case apierrors.IsNotFound(err):
+		conditions.False(&status.Conditions, network.Generation, ExposureAppliedCondition, ReasonExposureNotFound,
+			fmt.Sprintf("RouterExposure %q does not exist; only the configured rules are in effect", ref.Name))
+		return nil, nil
+	case err != nil:
+		// Not knowing is no reason to close what is open.
+		return nil, err
+	case exposure.Status.ObservedGeneration == 0:
+		conditions.False(&status.Conditions, network.Generation, ExposureAppliedCondition, ReasonExposureNotObserved,
+			fmt.Sprintf("RouterExposure %q has not been computed yet; only the configured rules are in effect", ref.Name))
+		return nil, nil
+	}
+	conditions.True(&status.Conditions, network.Generation, ExposureAppliedCondition, ReasonExposureApplied,
+		fmt.Sprintf("%d port(s) from RouterExposure %q", len(exposure.Status.Ports), ref.Name))
+	return exposure.Status.Ports, nil
+}
+
+// exposedRules turns exposed ports into rules, one per protocol and run of
+// consecutive ports: Hetzner limits how many rules a firewall has.
+func exposedRules(ports []corev1alpha1.ExposedPort) []cloud.FirewallRule {
+	byProtocol := map[corev1alpha1.ExposedProtocol][]int32{}
+	for _, port := range ports {
+		byProtocol[port.Protocol] = append(byProtocol[port.Protocol], port.Port)
+	}
+	var rules []cloud.FirewallRule
+	for _, protocol := range []corev1alpha1.ExposedProtocol{corev1alpha1.ExposedTCP, corev1alpha1.ExposedUDP} {
+		numbers := byProtocol[protocol]
+		slices.Sort(numbers)
+		numbers = slices.Compact(numbers)
+		for start := 0; start < len(numbers); {
+			end := start
+			for end+1 < len(numbers) && numbers[end+1] == numbers[end]+1 {
+				end++
+			}
+			port := strconv.Itoa(int(numbers[start]))
+			if end > start {
+				port += "-" + strconv.Itoa(int(numbers[end]))
+			}
+			rules = append(rules, cloud.FirewallRule{
+				Description: "router-api exposed by gateways",
+				Protocol:    string(protocol),
+				Port:        port,
+				Sources:     everywhere,
+			})
+			start = end + 1
+		}
+	}
+	return rules
 }
 
 var everywhere = []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("::/0")}

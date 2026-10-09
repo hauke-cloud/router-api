@@ -92,6 +92,13 @@ func SampleData(spec *configv1alpha1.VyOSConfigSpec) *render.Data {
 		Machine: render.Machine{ExternalIP: "203.0.113.7", InternalIP: "10.0.1.2"},
 		Peers:   []render.Peer{{Name: "edge-def34", Slot: 1, ExternalIP: "203.0.113.8", InternalIP: "10.0.1.3"}},
 		Host:    render.Host{PublicInterface: "eth0", PrivateInterface: "eth1"},
+		// What two Gateways would add up to: a list and a range of ports,
+		// both protocols, both families.
+		Exposed: []render.Exposed{
+			{Address: "203.0.113.18", Family: "ipv4", Protocol: "tcp", Ports: "80,443,8000-8010"},
+			{Address: "203.0.113.18", Family: "ipv4", Protocol: "udp", Ports: "53"},
+			{Address: "2001:db8::18", Family: "ipv6", Protocol: "tcp", Ports: "443"},
+		},
 	}
 }
 

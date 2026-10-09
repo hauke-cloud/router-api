@@ -3,12 +3,16 @@ package render
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
+	"net/netip"
 	"slices"
+	"strconv"
 	"strings"
 	"text/template"
 
+	corev1alpha1 "github.com/hauke-cloud/router-api/api/core/v1alpha1"
 	"github.com/hauke-cloud/router-api/internal/config/vyos/command"
 )
 
@@ -25,6 +29,20 @@ type Data struct {
 	Peers []Peer
 	// Host the VyOS container runs on.
 	Host Host
+	// Exposed is what the RouterExposure the configuration refers to lists,
+	// one entry per address and protocol, sorted by both.
+	Exposed []Exposed
+}
+
+// Exposed is one address and the ports of one protocol to let through to it.
+type Exposed struct {
+	Address string
+	// Family is "ipv4" or "ipv6", the word VyOS uses for it.
+	Family string
+	// Protocol is "tcp" or "udp".
+	Protocol string
+	// Ports as VyOS takes them in one value: "80,443,8000-8010".
+	Ports string
 }
 
 // Router identifies the router.
@@ -63,6 +81,56 @@ type Host struct {
 	PrivateInterface string
 }
 
+// Expose turns the endpoints of a RouterExposure into template data. Runs of
+// consecutive ports become ranges.
+func Expose(endpoints []corev1alpha1.ExposedEndpoint) []Exposed {
+	var exposed []Exposed
+	for i := range endpoints {
+		endpoint := &endpoints[i]
+		address, err := netip.ParseAddr(endpoint.Address)
+		if err != nil {
+			continue
+		}
+		family := "ipv4"
+		if address.Is6() {
+			family = "ipv6"
+		}
+		for _, protocol := range []corev1alpha1.ExposedProtocol{corev1alpha1.ExposedTCP, corev1alpha1.ExposedUDP} {
+			var numbers []int
+			for _, port := range endpoint.Ports {
+				if port.Protocol == protocol {
+					numbers = append(numbers, int(port.Port))
+				}
+			}
+			if len(numbers) == 0 {
+				continue
+			}
+			slices.Sort(numbers)
+			numbers = slices.Compact(numbers)
+			var ports []string
+			for start := 0; start < len(numbers); {
+				end := start
+				for end+1 < len(numbers) && numbers[end+1] == numbers[end]+1 {
+					end++
+				}
+				if end > start {
+					ports = append(ports, strconv.Itoa(numbers[start])+"-"+strconv.Itoa(numbers[end]))
+				} else {
+					ports = append(ports, strconv.Itoa(numbers[start]))
+				}
+				start = end + 1
+			}
+			exposed = append(exposed, Exposed{
+				Address: address.String(), Family: family, Protocol: string(protocol), Ports: strings.Join(ports, ","),
+			})
+		}
+	}
+	slices.SortFunc(exposed, func(a, b Exposed) int {
+		return cmp.Or(netip.MustParseAddr(a.Address).Compare(netip.MustParseAddr(b.Address)), strings.Compare(a.Protocol, b.Protocol))
+	})
+	return exposed
+}
+
 // SortPeers orders peers by name.
 func SortPeers(peers []Peer) []Peer {
 	slices.SortFunc(peers, func(a, b Peer) int { return strings.Compare(a.Name, b.Name) })
@@ -87,6 +155,14 @@ var funcs = template.FuncMap{
 			return "", errors.New(message)
 		}
 		return value, nil
+	},
+	// add sums integers, for rule numbers counted up from a base.
+	"add": func(numbers ...int) int {
+		sum := 0
+		for _, number := range numbers {
+			sum += number
+		}
+		return sum
 	},
 	"join":  func(separator string, items []string) string { return strings.Join(items, separator) },
 	"lower": strings.ToLower,

@@ -28,9 +28,13 @@ internet ──────► Floating IPs "svc" ─┤   (its own address)    
   so on becoming master a router runs `hcloud-vrrp-failover`, which assigns the
   lab's public addresses (Floating IPs) to itself through the API.
 - **Those Floating IPs are the lab's public IPs.** The routers do not hold
-  them. The master forwards them into its tunnel, any protocol, any port. Which
-  addresses those are, every router learns by **eBGP** from the lab router over
-  its own tunnel.
+  them. The master forwards them into its tunnel. Which addresses those are,
+  every router learns by **eBGP** from the lab router over its own tunnel.
+- **What is open is decided by the Gateways in the lab.** A Gateway annotated
+  with `router.hauke.cloud/expose: routers/edge` has the ports of its listeners
+  let through to its addresses, by the Hetzner firewall and by the routers, and
+  nothing else gets through from the internet apart from ping. No list of
+  ports is kept here (`exposure.yaml`).
 - **The operator runs in the lab** and reaches the routers on their public
   addresses. The Hetzner firewall lets the management port through from the
   lab's dynamic DNS name, which the Hetzner provider resolves every minute.
@@ -77,6 +81,9 @@ them.
   form.** An earlier version, with one tunnel shared by both routers, was
   committed in full on Hetzner servers. The per-slot version is validated on a
   real VyOS, not committed on a server.
+- Following Gateways is exercised by `test/system` with a real API server and
+  real Gateway objects, against the fake Hetzner and fake routers. **It has
+  not run on Hetzner or with a Gateway implementation behind it.**
 - **Not tested at all: the tunnels and BGP with a peer on the other end.** No
   lab router was connected in any test.
 
@@ -85,8 +92,8 @@ them.
 ```sh
 kubectl create namespace routers
 kubectl -n routers apply -f secret.example.yaml   # after filling it in
-kubectl -n routers apply -f network.yaml -f machine.yaml -f config.yaml -f routers.yaml
-kubectl -n routers get routerdeployments,routers,vyosconfigs
+kubectl -n routers apply -f exposure.yaml -f network.yaml -f machine.yaml -f config.yaml -f routers.yaml
+kubectl -n routers get routerdeployments,routers,vyosconfigs,routerexposures
 ```
 
 Changing `spec.template.spec.commands` in `config.yaml` reconfigures the

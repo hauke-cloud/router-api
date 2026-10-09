@@ -518,6 +518,68 @@ set high-availability vrrp group wan peer-address {{ .InternalIP }}
 	}
 }
 
+const exposedCommands = `{{- range $i, $e := .Exposed }}
+set firewall {{ $e.Family }} forward filter rule {{ add 100 $i }} action accept
+set firewall {{ $e.Family }} forward filter rule {{ add 100 $i }} destination address {{ $e.Address }}
+set firewall {{ $e.Family }} forward filter rule {{ add 100 $i }} destination port {{ $e.Ports }}
+set firewall {{ $e.Family }} forward filter rule {{ add 100 $i }} protocol {{ $e.Protocol }}
+{{- end }}
+`
+
+func TestExposedEndpointsAreRendered(t *testing.T) {
+	f := newFixture(t)
+	f.updateConfig(func(config *configv1alpha1.VyOSConfig) {
+		config.Spec.Commands = userCommands + exposedCommands
+		config.Spec.ExposureRef = &corev1alpha1.LocalObjectReference{Name: "edge"}
+	})
+	f.boot()
+
+	// Core has not handed this router a list yet. Taking that for an empty
+	// one would close every port on a router that had them open.
+	f.reconcile()
+	if got := f.condition(corev1alpha1.ConfigAppliedCondition); got != "False/"+ReasonRenderFailed {
+		t.Fatalf("ConfigApplied = %s", got)
+	}
+
+	tcp := func(port int32) corev1alpha1.ExposedPort {
+		return corev1alpha1.ExposedPort{Protocol: corev1alpha1.ExposedTCP, Port: port}
+	}
+	f.updateConfig(func(config *configv1alpha1.VyOSConfig) {
+		config.Spec.Exposed = []corev1alpha1.ExposedEndpoint{
+			{Address: "203.0.113.18", Ports: []corev1alpha1.ExposedPort{tcp(80), tcp(443), {Protocol: corev1alpha1.ExposedUDP, Port: 53}}},
+			{Address: "2001:db8::18", Ports: []corev1alpha1.ExposedPort{tcp(443)}},
+		}
+	})
+	f.reconcile()
+
+	if got := f.condition(corev1alpha1.ConfigAppliedCondition); got != "True/"+ReasonApplied {
+		t.Fatalf("ConfigApplied = %s", got)
+	}
+	for _, line := range []string{
+		"set firewall ipv4 forward filter rule 100 destination address 203.0.113.18",
+		"set firewall ipv4 forward filter rule 100 destination port 80,443",
+		"set firewall ipv4 forward filter rule 100 protocol tcp",
+		"set firewall ipv4 forward filter rule 101 destination port 53",
+		"set firewall ipv4 forward filter rule 101 protocol udp",
+		"set firewall ipv6 forward filter rule 102 destination address 2001:db8::18",
+	} {
+		if !f.running(line) {
+			t.Errorf("not running %q in %q", line, f.router.Running())
+		}
+	}
+
+	// A Gateway loses a listener, and core hands the shorter list over.
+	f.updateConfig(func(config *configv1alpha1.VyOSConfig) {
+		config.Spec.Exposed = []corev1alpha1.ExposedEndpoint{{Address: "203.0.113.18", Ports: []corev1alpha1.ExposedPort{tcp(443)}}}
+	})
+	f.reconcile()
+	if !f.running("set firewall ipv4 forward filter rule 100 destination port 443") ||
+		f.running("set firewall ipv4 forward filter rule 101 protocol udp") ||
+		f.running("set firewall ipv6 forward filter rule 102 destination address 2001:db8::18") {
+		t.Errorf("running = %q", f.router.Running())
+	}
+}
+
 func TestVRRPStateAndFault(t *testing.T) {
 	f := newFixture(t)
 	f.boot()

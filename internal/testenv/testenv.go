@@ -1,5 +1,6 @@
 // Package testenv runs integration tests against a real kube-apiserver and
-// etcd (envtest) with every CRD of router-api installed.
+// etcd (envtest) with every CRD of router-api installed, and the
+// Gateway API's Gateway.
 //
 // Controllers are not started. A test calls Reconcile itself and plays the
 // part of the other controllers by writing their objects, which keeps every
@@ -11,6 +12,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -22,6 +25,7 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	configv1alpha1 "github.com/hauke-cloud/router-api/api/config/v1alpha1"
 	corev1alpha1 "github.com/hauke-cloud/router-api/api/core/v1alpha1"
@@ -38,6 +42,7 @@ func Scheme() *runtime.Scheme {
 		corev1alpha1.AddToScheme,
 		infrav1alpha1.AddToScheme,
 		configv1alpha1.AddToScheme,
+		gatewayv1.Install,
 	} {
 		if err := add(scheme); err != nil {
 			panic(err)
@@ -64,6 +69,17 @@ func withoutAssets(getenv func(string) string) (code int, message string) {
 		"Run `make test`, which fetches them, or set " + SkipVariable + "=1 to leave these tests out."
 }
 
+// gatewayAPI returns the Gateway CRD as the Gateway API module ships it, in
+// the version go.mod pins: the cluster brings these, router-api only reads
+// Gateways, and the tests should read real ones.
+func gatewayAPI() (string, error) {
+	out, err := exec.CommandContext(context.Background(), "go", "list", "-m", "-f", "{{.Dir}}", "sigs.k8s.io/gateway-api").Output()
+	if err != nil {
+		return "", fmt.Errorf("go list -m sigs.k8s.io/gateway-api: %w", err)
+	}
+	return filepath.Join(strings.TrimSpace(string(out)), "config", "crd", "standard", "gateway.networking.k8s.io_gateways.yaml"), nil
+}
+
 // Run starts the control plane, hands a client for it to use, runs the tests
 // of the package and returns their exit code. Call it from TestMain.
 //
@@ -82,7 +98,12 @@ func RunWithConfig(m *testing.M, use func(*rest.Config, client.Client)) int {
 		return code
 	}
 
-	env := &envtest.Environment{}
+	gatewayCRDs, err := gatewayAPI()
+	if err != nil {
+		fmt.Println("find the Gateway API CRDs:", err)
+		return 1
+	}
+	env := &envtest.Environment{CRDDirectoryPaths: []string{gatewayCRDs}, ErrorIfCRDPathMissing: true}
 	cfg, err := env.Start()
 	if err != nil {
 		fmt.Println("start envtest:", err)

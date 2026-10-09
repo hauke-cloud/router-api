@@ -1,0 +1,20 @@
+# What is reachable from the internet is decided where the services are: a
+# Gateway in the lab cluster that carries
+#
+#   metadata:
+#     annotations:
+#       router.hauke.cloud/expose: routers/edge
+#
+# has the ports of its listeners let through to its addresses, by the Hetzner
+# firewall (network.yaml) and by the routers (config.yaml), and closed again
+# when it goes.
+apiVersion: router.hauke.cloud/v1alpha1
+kind: RouterExposure
+metadata:
+  name: edge
+spec:
+  gateways:
+    # Which namespaces' Gateways may ask, next to this one. Whoever can
+    # create a Gateway elsewhere cannot open a port with it.
+    namespaces:
+      - ingress

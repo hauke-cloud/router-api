@@ -59,6 +59,25 @@ spec:
               firewall:
                 description: Firewall in front of the routers.
                 properties:
+                  exposureRef:
+                    description: |-
+                      ExposureRef names a RouterExposure in the same namespace. Every port
+                      in its status is opened, from everywhere, in addition to Rules. A
+                      Hetzner firewall cannot tell destination addresses apart, so a port
+                      one Gateway listens on is open towards all of them; the routers'
+                      own configuration can be exact.
+                    properties:
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
                   managementPort:
                     default: 443
                     description: |-
@@ -192,7 +211,7 @@ spec:
             description: HetznerRouterNetworkStatus is the observed state of a HetznerRouterNetwork.
             properties:
               conditions:
-                description: 'Conditions: Ready.'
+                description: 'Conditions: Ready, ManagementSourcesResolved, ExposureApplied.'
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.

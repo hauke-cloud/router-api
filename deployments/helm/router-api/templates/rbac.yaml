@@ -29,6 +29,10 @@ rules:
   - apiGroups: ["router.hauke.cloud"]
     resources: ["routermachines"]
     verbs: ["get", "list", "watch"]
+  # The ports a firewall opens for Gateways.
+  - apiGroups: ["router.hauke.cloud"]
+    resources: ["routerexposures"]
+    verbs: ["get", "list", "watch"]
   # The Hetzner API token and the bootstrap data.
   - apiGroups: [""]
     resources: ["secrets"]
@@ -127,6 +131,11 @@ rules:
   - apiGroups: ["router.hauke.cloud"]
     resources: ["*"]
     verbs: ["*"]
+  # RouterExposures are computed from the Gateways that ask for it. Read
+  # only, and only if the cluster has the Gateway API at all.
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gateways"]
+    verbs: ["get", "list", "watch"]
 {{- end }}
 {{- range $manager, $group := dict "infrastructure-hetzner" "infrastructure.router.hauke.cloud" "config-vyos" "config.router.hauke.cloud" }}
 {{- if (index $.Values.managers $manager).enabled }}

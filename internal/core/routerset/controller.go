@@ -17,11 +17,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	corev1alpha1 "github.com/hauke-cloud/router-api/api/core/v1alpha1"
@@ -64,7 +66,23 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.RouterSet{}).
 		Owns(&corev1alpha1.Router{}).
+		Watches(&corev1alpha1.RouterExposure{}, handler.EnqueueRequestsFromMapFunc(r.setsIn)).
 		Complete(r)
+}
+
+// setsIn wakes every set of the namespace a RouterExposure is in: which of
+// them refers to it is in their config templates, which core cannot index.
+// There are few of either.
+func (r *Reconciler) setsIn(ctx context.Context, object client.Object) []reconcile.Request {
+	list := &corev1alpha1.RouterSetList{}
+	if err := r.List(ctx, list, client.InNamespace(object.GetNamespace())); err != nil {
+		return nil
+	}
+	requests := make([]reconcile.Request, len(list.Items))
+	for i := range list.Items {
+		requests[i] = reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])}
+	}
+	return requests
 }
 
 func (r *Reconciler) now() time.Time {
@@ -217,7 +235,59 @@ func (r *Reconciler) routers(ctx context.Context, set *corev1alpha1.RouterSet, s
 
 type templates struct {
 	infra, config *unstructured.Unstructured
-	configSpec    map[string]any
+	// configSpec is what the config object of a router is to say: the
+	// template's spec, and with it what the RouterExposure it refers to
+	// lists, if that is known.
+	configSpec map[string]any
+	// exposedUnknown is true while the template refers to a RouterExposure
+	// that does not exist or has never been computed. Every router then
+	// keeps the list it was last handed.
+	exposedUnknown bool
+}
+
+// specFor returns what the config object of one router is to say, given what
+// it says now.
+func (t *templates) specFor(current map[string]any) map[string]any {
+	if !t.exposedUnknown {
+		return t.configSpec
+	}
+	spec := runtime.DeepCopyJSON(t.configSpec)
+	if exposed, ok := current[contract.ExposedField]; ok {
+		spec[contract.ExposedField] = exposed
+	}
+	return spec
+}
+
+// exposed fills in spec.exposed from the RouterExposure a config template
+// refers to. Handing the list out through the config objects, instead of
+// leaving every router to read it, is what makes a Gateway's change reach
+// the routers one at a time and stop at the first that refuses it.
+func (r *Reconciler) exposed(ctx context.Context, namespace string, t *templates) error {
+	name := contract.ExposureRef(t.configSpec)
+	if name == "" {
+		return nil
+	}
+	delete(t.configSpec, contract.ExposedField)
+	exposure := &corev1alpha1.RouterExposure{}
+	err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, exposure)
+	switch {
+	case apierrors.IsNotFound(err), err == nil && exposure.Status.ObservedGeneration == 0:
+		t.exposedUnknown = true
+		return nil
+	case err != nil:
+		return err
+	}
+	// An empty list is a list: nothing is open. No list is "not known".
+	endpoints := make([]any, 0, len(exposure.Status.Endpoints))
+	for i := range exposure.Status.Endpoints {
+		endpoint, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&exposure.Status.Endpoints[i])
+		if err != nil {
+			return err
+		}
+		endpoints = append(endpoints, endpoint)
+	}
+	t.configSpec[contract.ExposedField] = endpoints
+	return nil
 }
 
 func (r *Reconciler) templates(ctx context.Context, set *corev1alpha1.RouterSet) (*templates, error) {
@@ -233,7 +303,8 @@ func (r *Reconciler) templates(ctx context.Context, set *corev1alpha1.RouterSet)
 	if err != nil {
 		return nil, err
 	}
-	return &templates{infra: infra, config: config, configSpec: configSpec}, nil
+	t := &templates{infra: infra, config: config, configSpec: configSpec}
+	return t, r.exposed(ctx, set.Namespace, t)
 }
 
 func (r *Reconciler) routerLabels(set *corev1alpha1.RouterSet, name, slot string) map[string]string {
@@ -302,6 +373,11 @@ func (r *Reconciler) ensureParts(ctx context.Context, set *corev1alpha1.RouterSe
 
 	config, err := contract.FromTemplate(t.config, router.Name, routerLabels, routerOwner)
 	if err != nil {
+		return err
+	}
+	// A new router starts with the list the others are being brought to.
+	// Without one it waits, see templates.
+	if _, err := contract.SetSpec(config, t.specFor(nil)); err != nil {
 		return err
 	}
 	if err := r.createIfMissing(ctx, config); err != nil {
@@ -546,7 +622,7 @@ func (r *Reconciler) syncConfig(ctx context.Context, routers []corev1alpha1.Rout
 		}
 		configs[router.Name] = config
 		current, _, _ := unstructured.NestedMap(config.Object, "spec")
-		hasSpec[router.Name] = equality.Semantic.DeepEqual(current, t.configSpec)
+		hasSpec[router.Name] = equality.Semantic.DeepEqual(current, t.specFor(current))
 		upToDate[router.Name] = hasSpec[router.Name] && isSettled(router, config)
 	}
 
@@ -574,7 +650,8 @@ func (r *Reconciler) syncConfig(ctx context.Context, routers []corev1alpha1.Rout
 	}
 
 	config := configs[candidate.Name]
-	if _, err := contract.SetSpec(config, t.configSpec); err != nil {
+	current, _, _ := unstructured.NestedMap(config.Object, "spec")
+	if _, err := contract.SetSpec(config, t.specFor(current)); err != nil {
 		return nil, err
 	}
 	if err := r.Update(ctx, config); err != nil {

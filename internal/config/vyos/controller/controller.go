@@ -429,6 +429,13 @@ func (r *Reconciler) data(ctx context.Context, config *configv1alpha1.VyOSConfig
 	}
 	data.Machine.ExternalIP, data.Machine.ExternalIPv6, data.Machine.InternalIP = addressesOf(owner)
 
+	if ref := config.Spec.ExposureRef; ref != nil && config.Spec.Exposed == nil {
+		// Core has not handed this router the list yet. An empty one
+		// would close everything on it; not rendering leaves it as it is.
+		return nil, fmt.Errorf("what RouterExposure %s lists has not been handed to this router yet", ref.Name)
+	}
+	data.Exposed = render.Expose(config.Spec.Exposed)
+
 	if data.Router.Group == "" {
 		return data, nil
 	}

@@ -771,3 +771,175 @@ func TestAConfigChangeReachesTheStandbyFirst(t *testing.T) {
 		}
 	}
 }
+
+// followExposure makes the config template refer to a RouterExposure named
+// edge.
+func (f *fixture) followExposure() {
+	f.t.Helper()
+	template := &configv1alpha1.VyOSConfigTemplate{}
+	if err := k8s.Get(f.ctx, types.NamespacedName{Namespace: f.namespace, Name: "edge"}, template); err != nil {
+		f.t.Fatal(err)
+	}
+	template.Spec.Template.Spec.ExposureRef = &corev1alpha1.LocalObjectReference{Name: "edge"}
+	if err := k8s.Update(f.ctx, template); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// expose plays the exposure controller: the RouterExposure named edge lists
+// one address with the given TCP ports.
+func (f *fixture) expose(ports ...int32) {
+	f.t.Helper()
+	key := types.NamespacedName{Namespace: f.namespace, Name: "edge"}
+	exposure := &corev1alpha1.RouterExposure{}
+	if err := k8s.Get(f.ctx, key, exposure); apierrors.IsNotFound(err) {
+		exposure = &corev1alpha1.RouterExposure{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}}
+		if err := k8s.Create(f.ctx, exposure); err != nil {
+			f.t.Fatal(err)
+		}
+	} else if err != nil {
+		f.t.Fatal(err)
+	}
+	exposure.Status.ObservedGeneration = exposure.Generation
+	exposure.Status.Endpoints = nil
+	if len(ports) > 0 {
+		endpoint := corev1alpha1.ExposedEndpoint{Address: "203.0.113.18"}
+		for _, port := range ports {
+			endpoint.Ports = append(endpoint.Ports, corev1alpha1.ExposedPort{Protocol: corev1alpha1.ExposedTCP, Port: port})
+		}
+		exposure.Status.Endpoints = []corev1alpha1.ExposedEndpoint{endpoint}
+	}
+	if err := k8s.Status().Update(f.ctx, exposure); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// exposing returns the routers whose config object lists exactly the given
+// TCP ports.
+func (f *fixture) exposing(ports ...int32) []string {
+	f.t.Helper()
+	var matching []string
+	for _, name := range names(f.routers()) {
+		var got []int32
+		for _, endpoint := range f.config(name).Spec.Exposed {
+			for _, port := range endpoint.Ports {
+				got = append(got, port.Port)
+			}
+		}
+		if slices.Equal(got, ports) {
+			matching = append(matching, name)
+		}
+	}
+	return matching
+}
+
+// A Gateway's new listener is a change of every router's configuration, and
+// is handed out like one: to the standby, and to the active router only once
+// the standby runs it.
+func TestAGatewayChangeReachesTheStandbyFirst(t *testing.T) {
+	for _, active := range []int{0, 1} {
+		f := newFixture(t, 2)
+		f.followExposure()
+		f.expose(443)
+		routers := f.allReady()
+		standby, master := routers[1-active].Name, routers[active].Name
+		f.setActive(master, true)
+		f.setActive(standby, false)
+		// New routers are created with the list as it is.
+		if got := f.exposing(443); len(got) != 2 {
+			t.Fatalf("exposing 443 = %v, want both routers from the start", got)
+		}
+		f.setApplied(standby, true)
+		f.setApplied(master, true)
+
+		f.expose(443, 8443)
+		f.reconcile()
+		f.reconcile()
+		if got := f.exposing(443, 8443); !slices.Equal(got, []string{standby}) {
+			t.Fatalf("exposing 8443 = %v, want only the standby %s", got, standby)
+		}
+
+		// The standby refuses it: the router that carries the traffic
+		// never sees the change.
+		f.setApplied(standby, false)
+		f.reconcile()
+		f.reconcile()
+		if got := f.exposing(443, 8443); !slices.Equal(got, []string{standby}) {
+			t.Fatalf("exposing 8443 = %v although the standby has not applied it", got)
+		}
+
+		f.setApplied(standby, true)
+		f.reconcile()
+		if got := f.exposing(443, 8443); len(got) != 2 {
+			t.Errorf("exposing 8443 = %v, want both", got)
+		}
+	}
+}
+
+// Nothing open is a list too, and is told apart from no list at all.
+func TestAnEmptyListIsHandedOver(t *testing.T) {
+	f := newFixture(t, 1)
+	f.followExposure()
+	f.expose()
+	name := f.allReady()[0].Name
+
+	config := f.config(name)
+	if config.Spec.Exposed == nil || len(config.Spec.Exposed) != 0 {
+		t.Fatalf("exposed = %#v, want an empty list that is there", config.Spec.Exposed)
+	}
+	// And it is not written again and again for looking different.
+	f.setApplied(name, true)
+	before := f.config(name).ResourceVersion
+	f.reconcile()
+	f.reconcile()
+	if after := f.config(name).Generation; after != config.Generation || before == "" {
+		t.Errorf("generation went from %d to %d without a change", config.Generation, after)
+	}
+}
+
+// A RouterExposure that is gone, or was never computed, is not a reason to
+// close anything: every router keeps the list it has, and other changes of
+// the configuration still reach it.
+func TestWithoutAListEveryRouterKeepsItsOwn(t *testing.T) {
+	const changed = "set system time-zone Europe/Berlin\n"
+	f := newFixture(t, 2)
+	f.followExposure()
+
+	// No RouterExposure yet: the routers are created without a list, which
+	// their provider takes for "not configured yet", not for "nothing".
+	routers := f.allReady()
+	for _, router := range routers {
+		if exposed := f.config(router.Name).Spec.Exposed; exposed != nil {
+			t.Fatalf("%s was created with exposed = %#v before there was a list", router.Name, exposed)
+		}
+	}
+
+	f.expose(443)
+	for range routers {
+		f.reconcile()
+		for _, name := range f.exposing(443) {
+			f.setApplied(name, true)
+		}
+	}
+	if got := f.exposing(443); len(got) != 2 {
+		t.Fatalf("exposing 443 = %v, want both", got)
+	}
+
+	exposure := &corev1alpha1.RouterExposure{ObjectMeta: metav1.ObjectMeta{Name: "edge", Namespace: f.namespace}}
+	if err := k8s.Delete(f.ctx, exposure); err != nil {
+		t.Fatal(err)
+	}
+	f.changeCommands(changed)
+	for range routers {
+		f.reconcile()
+		for _, name := range f.updated(changed) {
+			f.setApplied(name, true)
+		}
+	}
+	if got := f.updated(changed); len(got) != 2 {
+		t.Errorf("updated = %v: a missing RouterExposure held back an unrelated change", got)
+	}
+	if got := f.exposing(443); len(got) != 2 {
+		t.Errorf("exposing 443 = %v: the list was dropped with the RouterExposure", got)
+	}
+}

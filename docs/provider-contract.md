@@ -89,12 +89,42 @@ template's spec to the config objects of the running routers, one at a time, wai
 `ConfigApplied` on each. Core does not create routers from a template whose hash is missing or
 out of date.
 
+## Exposure
+
+`RouterExposure` is a core kind. Its status is what a group of routers is to let through,
+collected by core from Gateways:
+
+| Field | |
+| --- | --- |
+| `status.endpoints[]` | `address` and `ports[]` (`protocol`: `tcp` or `udp`, `port`), sorted |
+| `status.ports[]` | every port of the endpoints once, for something that cannot tell addresses apart |
+| `status.observedGeneration` | 0 until the status has been computed for the first time |
+
+**Config provider.** A config kind takes part with two fields of its spec:
+
+| Field | |
+| --- | --- |
+| `spec.exposureRef.name` | the RouterExposure, in the same namespace; set by the user in the template |
+| `spec.exposed[]` | the endpoints; written by core |
+
+Core copies `status.endpoints` to `spec.exposed` of the config objects as part of the spec it
+hands out, so a change reaches the routers one at a time, in the same order and with the same
+stop as any other change that is applied in place. The provider reads `spec.exposed` and nothing
+else. With `exposureRef` set and no `exposed` field at all, it has not been handed a list yet
+and must not configure the router as if the list were empty. Core leaves `exposed` as it is on
+every config object while the RouterExposure is missing or has never been computed.
+
+**Infrastructure provider.** One that has a firewall of its own refers to the RouterExposure by
+name and reads `status.ports` itself; there is no order to keep between routers. It must not
+treat a status that has never been computed as an empty list.
+
 ## Permissions
 
 Core's ClusterRole is aggregated. A provider ships a ClusterRole labelled
 `router.hauke.cloud/aggregate-to-core: "true"` that grants access to its API group.
 
-A provider needs to read the core kinds it looks at (`routermachines` or `routers`).
+A provider needs to read the core kinds it looks at (`routermachines` or `routers`, and
+`routerexposures` if it follows one itself).
 
 ## Common
 

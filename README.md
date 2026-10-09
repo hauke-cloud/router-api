@@ -21,6 +21,7 @@ so another cloud or another router OS is a new provider, not a change to the cor
 RouterDeployment ──► RouterSet ──► Router ──┬─► RouterMachine ──► HetznerMachine    ◄── HetznerMachineTemplate
                                             └─► VyOSConfig                           ◄── VyOSConfigTemplate
 RouterHealthCheck ── selects Routers        HetznerRouterNetwork: token, network, firewall, placement group
+RouterExposure    ◄── Gateways that ask     read by the firewall and by the configuration
 ```
 
 | Kind | Group | What it is |
@@ -30,6 +31,7 @@ RouterHealthCheck ── selects Routers        HetznerRouterNetwork: token, net
 | `Router` | | One router: a machine and its configuration. **The object to look at.** |
 | `RouterMachine` | | The server a router runs on, whatever the provider. |
 | `RouterHealthCheck` | | Reboots, then replaces, routers that stop working. |
+| `RouterExposure` | | The addresses and ports to let through, collected from annotated Gateways. |
 | `HetznerMachine`, `HetznerMachineTemplate` | `infrastructure.router.hauke.cloud` | A Hetzner Cloud server. |
 | `HetznerRouterNetwork` | | What the routers of a group share at Hetzner. |
 | `VyOSConfig`, `VyOSConfigTemplate` | `config.router.hauke.cloud` | What a VyOS router boots and runs. |
@@ -71,6 +73,12 @@ other, in one of two ways:
   replacements, so that, for instance, the other end can keep a tunnel to every router. A router
   is replaced in its slot: it hands over and is removed first, and the group is one router short
   until its successor works.
+
+**What is open** does not have to be a list kept by hand. A `RouterExposure` collects the
+addresses and listener ports of the [Gateways](https://gateway-api.sigs.k8s.io) annotated with
+`router.hauke.cloud/expose`. The firewall follows it, and the routers do the way they follow
+any change of their configuration: one at a time, the active one last
+([docs/configuration.md](docs/configuration.md#exposing-what-gateways-listen-on)).
 
 A router is `Ready` while it is in service. Whether it already runs the latest configuration is
 a separate condition, `ConfigApplied`: a router that is applying a change, or refused one, still

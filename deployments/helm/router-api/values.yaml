@@ -11,7 +11,8 @@ fullnameOverride: ""
 
 # Restrict every manager to one namespace, which has to exist. The managers
 # then also only have permissions in that namespace, apart from installing
-# CustomResourceDefinitions. Empty watches all namespaces.
+# CustomResourceDefinitions. Empty watches all namespaces. A RouterExposure
+# then only sees the Gateways of this namespace.
 watchNamespace: ""
 
 # Each manager applies the CustomResourceDefinitions of its API group when it
@@ -28,7 +29,8 @@ logFormat: json
 # and only the permissions it needs. A provider can be left out, or replaced
 # by one for another cloud or another router OS.
 managers:
-  # Router, RouterMachine, RouterSet, RouterDeployment, RouterHealthCheck.
+  # Router, RouterMachine, RouterSet, RouterDeployment, RouterHealthCheck,
+  # RouterExposure.
   core:
     enabled: true
     replicas: 1

@@ -81,6 +81,69 @@ spec:
                           apart from what the operator itself needs to stay in contact.
                         maxLength: 524288
                         type: string
+                      exposed:
+                        description: |-
+                          Exposed is available to Commands as {{ .Exposed }}. With ExposureRef
+                          set it is filled in by core on every VyOSConfig, and whatever a
+                          template says here is replaced; a router that has not been handed a
+                          list yet is not configured, rather than configured with nothing open.
+                          Without ExposureRef it is a list kept by hand.
+                        items:
+                          description: ExposedEndpoint is one address and what is
+                            to be let through to it.
+                          properties:
+                            address:
+                              description: Address is an IPv4 or IPv6 address.
+                              type: string
+                            ports:
+                              description: Ports to let through to the address, sorted
+                                by protocol and number.
+                              items:
+                                description: ExposedPort is one port of one protocol.
+                                properties:
+                                  port:
+                                    description: Port number.
+                                    format: int32
+                                    maximum: 65535
+                                    minimum: 1
+                                    type: integer
+                                  protocol:
+                                    description: Protocol of the port.
+                                    enum:
+                                    - tcp
+                                    - udp
+                                    type: string
+                                required:
+                                - port
+                                - protocol
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                          required:
+                          - address
+                          - ports
+                          type: object
+                        maxItems: 1024
+                        type: array
+                        x-kubernetes-list-type: atomic
+                      exposureRef:
+                        description: |-
+                          ExposureRef names a RouterExposure in the same namespace. Core hands
+                          what it lists to the routers of a group as Exposed, one router at a
+                          time like any other change of the configuration: the standby first,
+                          the active router last, and no further than a router that refuses it.
+                        properties:
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
                       files:
                         description: Files placed below /config at first boot.
                         items:

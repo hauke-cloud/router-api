@@ -31,6 +31,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/yaml"
 
 	configv1alpha1 "github.com/hauke-cloud/router-api/api/config/v1alpha1"
@@ -235,6 +236,7 @@ set high-availability vrrp group wan peer-address {{ .InternalIP }}
 
 // customize changes the objects of a group before they are created.
 type customize struct {
+	network    func(*infrav1alpha1.HetznerRouterNetwork)
 	deployment func(*corev1alpha1.RouterDeployment)
 	machine    func(*infrav1alpha1.HetznerMachineTemplate)
 	config     func(*configv1alpha1.VyOSConfigTemplate)
@@ -316,6 +318,10 @@ func (s *system) createWith(c customize) {
 	}
 	for _, object := range objects {
 		switch typed := object.(type) {
+		case *infrav1alpha1.HetznerRouterNetwork:
+			if c.network != nil {
+				c.network(typed)
+			}
 		case *corev1alpha1.RouterDeployment:
 			if c.deployment != nil {
 				c.deployment(typed)
@@ -732,5 +738,103 @@ func TestSlots(t *testing.T) {
 			return "the healthy router in slot 0 was touched"
 		}
 		return inPlace()
+	})
+}
+
+// A Gateway asks to be exposed, and both the firewall in front of the routers
+// and the routers themselves follow: core collects, the two providers act.
+func TestGatewaysDecideWhatIsOpen(t *testing.T) {
+	s := start(t)
+	ref := &corev1alpha1.LocalObjectReference{Name: "edge"}
+	if err := k8s.Create(s.ctx, &corev1alpha1.RouterExposure{ObjectMeta: metav1.ObjectMeta{Name: "edge", Namespace: s.namespace}}); err != nil {
+		t.Fatal(err)
+	}
+	s.createWith(customize{
+		network: func(n *infrav1alpha1.HetznerRouterNetwork) { n.Spec.Firewall.ExposureRef = ref },
+		config: func(c *configv1alpha1.VyOSConfigTemplate) {
+			c.Spec.Template.Spec.ExposureRef = ref
+			c.Spec.Template.Spec.Commands = configCommands + `{{- range $i, $e := .Exposed }}
+set firewall {{ $e.Family }} forward filter rule {{ add 100 $i }} action accept
+set firewall {{ $e.Family }} forward filter rule {{ add 100 $i }} destination address {{ $e.Address }}
+set firewall {{ $e.Family }} forward filter rule {{ add 100 $i }} destination port {{ $e.Ports }}
+set firewall {{ $e.Family }} forward filter rule {{ add 100 $i }} protocol {{ $e.Protocol }}
+{{- end }}
+`
+		},
+	})
+	s.eventually("two routers to become ready", 90*time.Second, func() bool { return len(s.ready()) == 2 }, nil)
+	routers := s.ready()
+
+	// open reports whether the Hetzner firewall lets the port through.
+	open := func(port string) bool {
+		for _, rule := range s.cloud.FirewallRules("router-api-" + s.namespace + "-edge") {
+			if rule.Protocol == "tcp" && rule.Port == port && len(rule.Sources) == 2 {
+				return true
+			}
+		}
+		return false
+	}
+	if open("443") || open("8443") {
+		t.Fatal("ports are open before any Gateway asked for them")
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "web", Namespace: s.namespace,
+			Annotations: map[string]string{corev1alpha1.ExposeAnnotation: "edge"},
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "test",
+			Listeners:        []gatewayv1.Listener{{Name: "https", Protocol: gatewayv1.HTTPSProtocolType, Port: 443}},
+		},
+	}
+	if err := k8s.Create(s.ctx, gateway); err != nil {
+		t.Fatal(err)
+	}
+	// The Gateway's implementation gives it an address.
+	gateway.Status.Addresses = []gatewayv1.GatewayStatusAddress{{Value: "203.0.113.18"}}
+	if err := k8s.Status().Update(s.ctx, gateway); err != nil {
+		t.Fatal(err)
+	}
+	s.eventually("the Gateway's port to be open", 60*time.Second, func() bool {
+		return open("443") &&
+			s.allRun(routers, "set firewall ipv4 forward filter rule 100 destination address 203.0.113.18") &&
+			s.allRun(routers, "set firewall ipv4 forward filter rule 100 destination port 443")
+	}, nil)
+
+	// A listener more, and nothing but the Gateway was touched.
+	if err := k8s.Get(s.ctx, client.ObjectKeyFromObject(gateway), gateway); err != nil {
+		t.Fatal(err)
+	}
+	gateway.Spec.Listeners = append(gateway.Spec.Listeners, gatewayv1.Listener{Name: "alt", Protocol: gatewayv1.HTTPSProtocolType, Port: 8443})
+	if err := k8s.Update(s.ctx, gateway); err != nil {
+		t.Fatal(err)
+	}
+	s.eventually("the new listener's port to be open", 60*time.Second, func() bool {
+		return open("443") && open("8443") &&
+			s.allRun(routers, "set firewall ipv4 forward filter rule 100 destination port 443,8443")
+	}, nil)
+
+	// The Gateway goes, and so does what was open for it.
+	if err := k8s.Delete(s.ctx, gateway); err != nil {
+		t.Fatal(err)
+	}
+	s.eventually("the ports to be closed again", 60*time.Second, func() bool {
+		if open("443") || open("8443") {
+			return false
+		}
+		for _, name := range routers {
+			for _, line := range s.dc.router(name).Running() {
+				if strings.HasPrefix(line, "set firewall ") {
+					return false
+				}
+			}
+		}
+		return true
+	}, func() string {
+		if ready := s.ready(); len(ready) < 2 {
+			return fmt.Sprintf("only %v are ready: following a Gateway must not take a router out of service", ready)
+		}
+		return ""
 	})
 }

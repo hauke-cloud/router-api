@@ -35,12 +35,19 @@ const (
 	ReasonPrimaryIPUnusable       = "PrimaryIPUnusable"
 	ReasonDeleting                = "Deleting"
 	ReasonPaused                  = "Paused"
+	ReasonExposureApplied         = "ExposureApplied"
+	ReasonExposureNotFound        = "ExposureNotFound"
+	ReasonExposureNotObserved     = "ExposureNotObserved"
 )
 
 // ManagementSourcesResolvedCondition is False on a HetznerRouterNetwork while
 // a management source host name cannot be resolved and its last known
 // addresses are used instead.
 const ManagementSourcesResolvedCondition = "ManagementSourcesResolved"
+
+// ExposureAppliedCondition is on a HetznerRouterNetwork whose firewall
+// follows a RouterExposure: True while the firewall has that object's ports.
+const ExposureAppliedCondition = "ExposureApplied"
 
 const (
 	// ManagedByLabel marks every Hetzner resource this provider creates.

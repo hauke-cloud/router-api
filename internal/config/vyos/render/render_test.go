@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	corev1alpha1 "github.com/hauke-cloud/router-api/api/core/v1alpha1"
 	"github.com/hauke-cloud/router-api/internal/config/vyos/command"
 )
 
@@ -103,5 +104,26 @@ func TestPeersAreSorted(t *testing.T) {
 	peers := SortPeers([]Peer{{Name: "c"}, {Name: "a"}, {Name: "b"}})
 	if peers[0].Name != "a" || peers[1].Name != "b" || peers[2].Name != "c" {
 		t.Errorf("peers = %v", peers)
+	}
+}
+
+func TestExpose(t *testing.T) {
+	port := func(protocol corev1alpha1.ExposedProtocol, number int32) corev1alpha1.ExposedPort {
+		return corev1alpha1.ExposedPort{Protocol: protocol, Port: number}
+	}
+	got := Expose([]corev1alpha1.ExposedEndpoint{
+		{Address: "2001:db8::18", Ports: []corev1alpha1.ExposedPort{port("tcp", 443)}},
+		{Address: "203.0.113.18", Ports: []corev1alpha1.ExposedPort{
+			port("udp", 53), port("tcp", 8001), port("tcp", 443), port("tcp", 8000), port("tcp", 8002), port("tcp", 80),
+		}},
+		{Address: "not an address", Ports: []corev1alpha1.ExposedPort{port("tcp", 22)}},
+	})
+	want := []Exposed{
+		{Address: "203.0.113.18", Family: "ipv4", Protocol: "tcp", Ports: "80,443,8000-8002"},
+		{Address: "203.0.113.18", Family: "ipv4", Protocol: "udp", Ports: "53"},
+		{Address: "2001:db8::18", Family: "ipv6", Protocol: "tcp", Ports: "443"},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("Expose = %+v, want %+v", got, want)
 	}
 }
