@@ -26,6 +26,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
@@ -815,12 +816,35 @@ set firewall {{ $e.Family }} forward filter rule {{ add 100 $i }} protocol {{ $e
 			s.allRun(routers, "set firewall ipv4 forward filter rule 100 destination port 443,8443")
 	}, nil)
 
+	// Someone else adds a listener with a ListenerSet, which counts once the
+	// Gateway's implementation has accepted it.
+	set := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "database", Namespace: s.namespace},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: "web"},
+			Listeners: []gatewayv1.ListenerEntry{{Name: "postgres", Protocol: gatewayv1.TCPProtocolType, Port: 5432}},
+		},
+	}
+	if err := k8s.Create(s.ctx, set); err != nil {
+		t.Fatal(err)
+	}
+	meta.SetStatusCondition(&set.Status.Conditions, metav1.Condition{
+		Type: string(gatewayv1.ListenerSetConditionAccepted), Status: metav1.ConditionTrue, Reason: string(gatewayv1.ListenerSetReasonAccepted),
+	})
+	if err := k8s.Status().Update(s.ctx, set); err != nil {
+		t.Fatal(err)
+	}
+	s.eventually("the ListenerSet's port to be open", 60*time.Second, func() bool {
+		return open("5432") &&
+			s.allRun(routers, "set firewall ipv4 forward filter rule 100 destination port 443,5432,8443")
+	}, nil)
+
 	// The Gateway goes, and so does what was open for it.
 	if err := k8s.Delete(s.ctx, gateway); err != nil {
 		t.Fatal(err)
 	}
 	s.eventually("the ports to be closed again", 60*time.Second, func() bool {
-		if open("443") || open("8443") {
+		if open("443") || open("8443") || open("5432") {
 			return false
 		}
 		for _, name := range routers {

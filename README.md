@@ -76,7 +76,7 @@ other, in one of two ways:
 
 **What is open** does not have to be a list kept by hand. A `RouterExposure` collects the
 addresses and listener ports of the [Gateways](https://gateway-api.sigs.k8s.io) annotated with
-`router.hauke.cloud/expose`. The firewall follows it, and the routers do the way they follow
+`router.hauke.cloud/expose`, and of the ListenerSets those have accepted. The firewall follows it, and the routers do the way they follow
 any change of their configuration: one at a time, the active one last
 ([docs/configuration.md](docs/configuration.md#exposing-what-gateways-listen-on)).
 

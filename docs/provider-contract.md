@@ -92,7 +92,7 @@ out of date.
 ## Exposure
 
 `RouterExposure` is a core kind. Its status is what a group of routers is to let through,
-collected by core from Gateways:
+collected by core from Gateways and their ListenerSets:
 
 | Field | |
 | --- | --- |

@@ -273,7 +273,7 @@ func TestWithoutTheGatewayAPINothingIsClosed(t *testing.T) {
 	f.gateway(f.namespace, "web", []listener{{gatewayv1.HTTPSProtocolType, 443}}, "203.0.113.18")
 	f.reconcile()
 
-	f.r.Client = withoutGateways{k8s}
+	f.r.Client = without{k8s, "Gateway"}
 	f.reconcile()
 
 	status := f.status()
@@ -286,15 +286,225 @@ func TestWithoutTheGatewayAPINothingIsClosed(t *testing.T) {
 	}
 }
 
-// withoutGateways answers a list of Gateways the way a cluster that does not
-// serve them does.
-type withoutGateways struct{ client.Client }
+// without answers a list of one kind of the Gateway API the way a cluster
+// that does not serve it does.
+type without struct {
+	client.Client
+	kind string
+}
 
-func (c withoutGateways) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
-	if _, ok := list.(*gatewayv1.GatewayList); ok {
-		return &meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: gatewayv1.GroupName, Kind: "Gateway"}}
+func (c without) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	var kind string
+	switch list.(type) {
+	case *gatewayv1.GatewayList:
+		kind = "Gateway"
+	case *gatewayv1.ListenerSetList:
+		kind = "ListenerSet"
+	}
+	if kind == c.kind {
+		return &meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: gatewayv1.GroupName, Kind: kind}}
 	}
 	return c.Client.List(ctx, list, opts...)
+}
+
+// listenerSet creates a ListenerSet attached to the Gateway, which its
+// implementation has not looked at yet.
+func (f *fixture) listenerSet(namespace, name string, gateway *gatewayv1.Gateway, listeners ...listener) *gatewayv1.ListenerSet {
+	f.t.Helper()
+	set := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Spec: gatewayv1.ListenerSetSpec{ParentRef: gatewayv1.ParentGatewayReference{
+			Name: gatewayv1.ObjectName(gateway.Name), Namespace: ptr.To(gatewayv1.Namespace(gateway.Namespace)),
+		}},
+	}
+	for i, l := range listeners {
+		set.Spec.Listeners = append(set.Spec.Listeners, gatewayv1.ListenerEntry{
+			Name: gatewayv1.SectionName(fmt.Sprintf("l%d", i)), Protocol: l.protocol, Port: l.port,
+		})
+	}
+	if err := k8s.Create(f.ctx, set); err != nil {
+		f.t.Fatalf("create ListenerSet: %v", err)
+	}
+	return set
+}
+
+// accept answers a ListenerSet the way the Gateway's implementation does.
+func (f *fixture) accept(set *gatewayv1.ListenerSet, status metav1.ConditionStatus, reason gatewayv1.ListenerSetConditionReason) {
+	f.t.Helper()
+	meta.SetStatusCondition(&set.Status.Conditions, metav1.Condition{
+		Type: string(gatewayv1.ListenerSetConditionAccepted), Status: status, Reason: string(reason), ObservedGeneration: set.Generation,
+	})
+	if err := k8s.Status().Update(f.ctx, set); err != nil {
+		f.t.Fatalf("update ListenerSet status: %v", err)
+	}
+}
+
+func TestListenersOfAcceptedListenerSetsAreTheGateways(t *testing.T) {
+	// The ListenerSet's namespace is the Gateway's to allow, not the
+	// RouterExposure's: it is not listed here.
+	f := newFixture(t)
+	apps := testenv.Namespace(t, k8s)
+	gateway := f.gateway(f.namespace, "web", []listener{{gatewayv1.HTTPSProtocolType, 443}}, "203.0.113.18", "2001:db8::18")
+	f.gateway(f.namespace, "other", []listener{{gatewayv1.HTTPProtocolType, 80}}, "203.0.113.19")
+	set := f.listenerSet(apps, "mail", gateway, listener{gatewayv1.TCPProtocolType, 25}, listener{gatewayv1.UDPProtocolType, 4500}, listener{"example.net/quic", 444})
+	f.accept(set, metav1.ConditionTrue, gatewayv1.ListenerSetReasonAccepted)
+
+	f.reconcile()
+
+	status := f.status()
+	want := []string{
+		"203.0.113.18 tcp/25 tcp/443 udp/4500",
+		"203.0.113.19 tcp/80",
+		"2001:db8::18 tcp/25 tcp/443 udp/4500",
+	}
+	if got := endpointStrings(status.Endpoints); !slices.Equal(got, want) {
+		t.Errorf("endpoints = %q, want %q", got, want)
+	}
+	if len(status.ListenerSets) != 1 {
+		t.Fatalf("listenerSets = %+v", status.ListenerSets)
+	}
+	report := status.ListenerSets[0]
+	if report.Namespace != apps || report.Name != "mail" || report.Gateway != f.namespace+"/web" || !report.Exposed ||
+		!strings.Contains(report.Message, "example.net/quic") {
+		t.Errorf("listenerSets = %+v", report)
+	}
+}
+
+// Creating a ListenerSet that points at an exposed Gateway opens nothing. The
+// Gateway has to take it.
+func TestAListenerSetTheGatewayHasNotAcceptedIsIgnored(t *testing.T) {
+	f := newFixture(t)
+	gateway := f.gateway(f.namespace, "web", []listener{{gatewayv1.HTTPSProtocolType, 443}}, "203.0.113.18")
+	set := f.listenerSet(f.namespace, "sneaky", gateway, listener{gatewayv1.TCPProtocolType, 22})
+
+	for _, step := range []struct {
+		status metav1.ConditionStatus
+		reason gatewayv1.ListenerSetConditionReason
+	}{
+		// As the API server creates it, before anything looked at it.
+		{},
+		{metav1.ConditionFalse, gatewayv1.ListenerSetReasonNotAllowed},
+	} {
+		if step.status != "" {
+			f.accept(set, step.status, step.reason)
+		}
+		f.reconcile()
+		status := f.status()
+		if got := endpointStrings(status.Endpoints); !slices.Equal(got, []string{"203.0.113.18 tcp/443"}) {
+			t.Errorf("endpoints = %q", got)
+		}
+		if len(status.ListenerSets) != 1 || status.ListenerSets[0].Exposed || !strings.Contains(status.ListenerSets[0].Message, "not accepted") {
+			t.Errorf("listenerSets = %+v, want the refusal to be visible", status.ListenerSets)
+		}
+	}
+	if message := f.status().ListenerSets[0].Message; !strings.Contains(message, string(gatewayv1.ListenerSetReasonNotAllowed)) {
+		t.Errorf("message = %q, want the Gateway's reason", message)
+	}
+
+	f.accept(set, metav1.ConditionTrue, gatewayv1.ListenerSetReasonAccepted)
+	f.reconcile()
+	if got := endpointStrings(f.status().Endpoints); !slices.Equal(got, []string{"203.0.113.18 tcp/22 tcp/443"}) {
+		t.Errorf("endpoints = %q", got)
+	}
+
+	if err := k8s.Delete(f.ctx, set); err != nil {
+		t.Fatal(err)
+	}
+	f.reconcile()
+	status := f.status()
+	if got := endpointStrings(status.Endpoints); !slices.Equal(got, []string{"203.0.113.18 tcp/443"}) || len(status.ListenerSets) != 0 {
+		t.Errorf("endpoints = %q, listenerSets = %+v", got, status.ListenerSets)
+	}
+}
+
+// An accepted ListenerSet does not get a Gateway past the RouterExposure.
+func TestAListenerSetOfAGatewayThatMayNotAskIsIgnored(t *testing.T) {
+	f := newFixture(t)
+	elsewhere := testenv.Namespace(t, k8s)
+	gateway := f.gateway(elsewhere, "sneaky", []listener{{gatewayv1.TCPProtocolType, 22}}, "203.0.113.20")
+	// In the RouterExposure's own namespace, even.
+	set := f.listenerSet(f.namespace, "more", gateway, listener{gatewayv1.TCPProtocolType, 23})
+	f.accept(set, metav1.ConditionTrue, gatewayv1.ListenerSetReasonAccepted)
+	// Attached to a Gateway that did not ask at all.
+	plain := f.gateway(f.namespace, "internal", []listener{{gatewayv1.HTTPProtocolType, 8080}}, "203.0.113.19")
+	plain.Annotations = nil
+	if err := k8s.Update(f.ctx, plain); err != nil {
+		t.Fatal(err)
+	}
+	f.accept(f.listenerSet(f.namespace, "internal", plain, listener{gatewayv1.TCPProtocolType, 24}), metav1.ConditionTrue, gatewayv1.ListenerSetReasonAccepted)
+
+	f.reconcile()
+
+	status := f.status()
+	if len(status.Endpoints) != 0 || len(status.Ports) != 0 {
+		t.Errorf("endpoints = %+v, ports = %+v", status.Endpoints, status.Ports)
+	}
+	if len(status.ListenerSets) != 1 || status.ListenerSets[0].Name != "more" || status.ListenerSets[0].Exposed ||
+		!strings.Contains(status.ListenerSets[0].Message, elsewhere) {
+		t.Errorf("listenerSets = %+v", status.ListenerSets)
+	}
+}
+
+func TestAListenerSetOfAGatewayWithoutAnAddressWaits(t *testing.T) {
+	f := newFixture(t)
+	gateway := f.gateway(f.namespace, "web", []listener{{gatewayv1.HTTPSProtocolType, 443}})
+	f.accept(f.listenerSet(f.namespace, "mail", gateway, listener{gatewayv1.TCPProtocolType, 25}), metav1.ConditionTrue, gatewayv1.ListenerSetReasonAccepted)
+
+	f.reconcile()
+
+	status := f.status()
+	if len(status.Endpoints) != 0 || status.ListenerSets[0].Exposed || !strings.Contains(status.ListenerSets[0].Message, "address") {
+		t.Errorf("status = %+v", status)
+	}
+}
+
+// A Gateway API from before ListenerSets is all Gateways. One that had them
+// and lost the kind is a CRD being replaced, and nothing is closed over it.
+func TestWithoutListenerSets(t *testing.T) {
+	f := newFixture(t)
+	gateway := f.gateway(f.namespace, "web", []listener{{gatewayv1.HTTPSProtocolType, 443}}, "203.0.113.18")
+	f.r.Client = without{k8s, "ListenerSet"}
+	f.reconcile()
+
+	status := f.status()
+	if got := endpointStrings(status.Endpoints); !slices.Equal(got, []string{"203.0.113.18 tcp/443"}) {
+		t.Errorf("endpoints = %q", got)
+	}
+	if !conditions.IsTrue(status.Conditions, corev1alpha1.ReadyCondition) {
+		t.Errorf("conditions = %+v", status.Conditions)
+	}
+
+	f.r.Client = k8s
+	f.accept(f.listenerSet(f.namespace, "mail", gateway, listener{gatewayv1.TCPProtocolType, 25}), metav1.ConditionTrue, gatewayv1.ListenerSetReasonAccepted)
+	f.reconcile()
+	f.r.Client = without{k8s, "ListenerSet"}
+	f.reconcile()
+
+	status = f.status()
+	if got := endpointStrings(status.Endpoints); !slices.Equal(got, []string{"203.0.113.18 tcp/25 tcp/443"}) {
+		t.Errorf("endpoints = %q, want them kept", got)
+	}
+	ready := conditions.Get(status.Conditions, corev1alpha1.ReadyCondition)
+	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != ReasonGatewayAPIUnavailable {
+		t.Errorf("Ready = %+v", ready)
+	}
+}
+
+func TestParent(t *testing.T) {
+	for want, ref := range map[string]gatewayv1.ParentGatewayReference{
+		"apps/web":    {Name: "web"},
+		"ingress/web": {Name: "web", Namespace: ptr.To(gatewayv1.Namespace("ingress")), Group: ptr.To(gatewayv1.Group(gatewayv1.GroupName)), Kind: ptr.To(gatewayv1.Kind("Gateway"))},
+		"":            {Name: "web", Kind: ptr.To(gatewayv1.Kind("Service"))},
+	} {
+		set := &gatewayv1.ListenerSet{ObjectMeta: metav1.ObjectMeta{Namespace: "apps"}, Spec: gatewayv1.ListenerSetSpec{ParentRef: ref}}
+		got := ""
+		if key, ok := parent(set); ok {
+			got = key.String()
+		}
+		if got != want {
+			t.Errorf("parent(%+v) = %q, want %q", ref, got, want)
+		}
+	}
 }
 
 func TestTarget(t *testing.T) {

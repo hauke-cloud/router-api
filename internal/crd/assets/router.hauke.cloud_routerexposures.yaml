@@ -68,7 +68,9 @@ spec:
                       object, which always may. "*" allows every namespace. A Gateway
                       elsewhere that names this object is reported in the status and
                       otherwise ignored: being able to create a Gateway somewhere must not
-                      be enough to open ports on the routers.
+                      be enough to open ports on the routers. The list is about Gateways
+                      only. Which namespaces' ListenerSets add listeners to a Gateway is
+                      the Gateway's to say, in its spec.allowedListeners.
                     items:
                       maxLength: 63
                       type: string
@@ -145,7 +147,8 @@ spec:
               endpoints:
                 description: |-
                   Endpoints are the addresses of the Gateways with the ports of their
-                  listeners, sorted by address.
+                  listeners and of the listeners of the ListenerSets they accepted,
+                  sorted by address.
                 items:
                   description: ExposedEndpoint is one address and what is to be let
                     through to it.
@@ -210,6 +213,42 @@ spec:
                       type: string
                   required:
                   - exposed
+                  - name
+                  - namespace
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              listenerSets:
+                description: |-
+                  ListenerSets attached to those Gateways, sorted by namespace and
+                  name.
+                items:
+                  description: |-
+                    ExposedListenerSet says what became of one ListenerSet attached to a
+                    Gateway that asked to be exposed.
+                  properties:
+                    exposed:
+                      description: |-
+                        Exposed is true if at least one listener of the ListenerSet is part
+                        of the endpoints.
+                      type: boolean
+                    gateway:
+                      description: Gateway the ListenerSet attaches to, as "<namespace>/<name>".
+                      type: string
+                    message:
+                      description: |-
+                        Message says why the ListenerSet is not exposed, or what of it is
+                        left out.
+                      type: string
+                    name:
+                      description: Name of the ListenerSet.
+                      type: string
+                    namespace:
+                      description: Namespace of the ListenerSet.
+                      type: string
+                  required:
+                  - exposed
+                  - gateway
                   - name
                   - namespace
                   type: object

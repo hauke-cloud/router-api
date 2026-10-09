@@ -25,7 +25,9 @@ const (
 	// Gateway's addresses and listener ports to be let through by the routers.
 	// Its value names a RouterExposure, as "<namespace>/<name>", or as
 	// "<name>" for one in the Gateway's own namespace. The RouterExposure
-	// decides whether the Gateway's namespace may ask.
+	// decides whether the Gateway's namespace may ask. The listeners of the
+	// ListenerSets the Gateway has accepted are the Gateway's, and need no
+	// annotation of their own.
 	ExposeAnnotation = "router.hauke.cloud/expose"
 
 	// AllNamespaces in a RouterExposure's list of namespaces allows every
@@ -79,6 +81,24 @@ type ExposedGateway struct {
 	Message string `json:"message,omitempty"`
 }
 
+// ExposedListenerSet says what became of one ListenerSet attached to a
+// Gateway that asked to be exposed.
+type ExposedListenerSet struct {
+	// Namespace of the ListenerSet.
+	Namespace string `json:"namespace"`
+	// Name of the ListenerSet.
+	Name string `json:"name"`
+	// Gateway the ListenerSet attaches to, as "<namespace>/<name>".
+	Gateway string `json:"gateway"`
+	// Exposed is true if at least one listener of the ListenerSet is part
+	// of the endpoints.
+	Exposed bool `json:"exposed"`
+	// Message says why the ListenerSet is not exposed, or what of it is
+	// left out.
+	// +optional
+	Message string `json:"message,omitempty"`
+}
+
 // GatewaySource says which Gateways a RouterExposure listens to.
 type GatewaySource struct {
 	// Namespaces whose Gateways may name this object in their
@@ -86,7 +106,9 @@ type GatewaySource struct {
 	// object, which always may. "*" allows every namespace. A Gateway
 	// elsewhere that names this object is reported in the status and
 	// otherwise ignored: being able to create a Gateway somewhere must not
-	// be enough to open ports on the routers.
+	// be enough to open ports on the routers. The list is about Gateways
+	// only. Which namespaces' ListenerSets add listeners to a Gateway is
+	// the Gateway's to say, in its spec.allowedListeners.
 	// +kubebuilder:validation:MaxItems=256
 	// +kubebuilder:validation:items:MaxLength=63
 	// +listType=set
@@ -106,7 +128,8 @@ type RouterExposureSpec struct {
 // it; nothing in it is specific to one of them.
 type RouterExposureStatus struct {
 	// Endpoints are the addresses of the Gateways with the ports of their
-	// listeners, sorted by address.
+	// listeners and of the listeners of the ListenerSets they accepted,
+	// sorted by address.
 	// +listType=map
 	// +listMapKey=address
 	// +optional
@@ -120,6 +143,11 @@ type RouterExposureStatus struct {
 	// +listType=atomic
 	// +optional
 	Gateways []ExposedGateway `json:"gateways,omitempty"`
+	// ListenerSets attached to those Gateways, sorted by namespace and
+	// name.
+	// +listType=atomic
+	// +optional
+	ListenerSets []ExposedListenerSet `json:"listenerSets,omitempty"`
 	// ObservedGeneration is the generation this status was computed from.
 	// It is 0 until the Gateways have been looked at for the first time,
 	// and providers do not act on a status that has never been computed.

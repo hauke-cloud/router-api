@@ -1,6 +1,6 @@
 // Package testenv runs integration tests against a real kube-apiserver and
 // etcd (envtest) with every CRD of router-api installed, and the
-// Gateway API's Gateway.
+// Gateway API's Gateway and ListenerSet.
 //
 // Controllers are not started. A test calls Reconcile itself and plays the
 // part of the other controllers by writing their objects, which keeps every
@@ -69,15 +69,19 @@ func withoutAssets(getenv func(string) string) (code int, message string) {
 		"Run `make test`, which fetches them, or set " + SkipVariable + "=1 to leave these tests out."
 }
 
-// gatewayAPI returns the Gateway CRD as the Gateway API module ships it, in
-// the version go.mod pins: the cluster brings these, router-api only reads
-// Gateways, and the tests should read real ones.
-func gatewayAPI() (string, error) {
+// gatewayAPI returns the Gateway and ListenerSet CRDs as the Gateway API
+// module ships them, in the version go.mod pins: the cluster brings these,
+// router-api only reads them, and the tests should read real ones.
+func gatewayAPI() ([]string, error) {
 	out, err := exec.CommandContext(context.Background(), "go", "list", "-m", "-f", "{{.Dir}}", "sigs.k8s.io/gateway-api").Output()
 	if err != nil {
-		return "", fmt.Errorf("go list -m sigs.k8s.io/gateway-api: %w", err)
+		return nil, fmt.Errorf("go list -m sigs.k8s.io/gateway-api: %w", err)
 	}
-	return filepath.Join(strings.TrimSpace(string(out)), "config", "crd", "standard", "gateway.networking.k8s.io_gateways.yaml"), nil
+	standard := filepath.Join(strings.TrimSpace(string(out)), "config", "crd", "standard")
+	return []string{
+		filepath.Join(standard, "gateway.networking.k8s.io_gateways.yaml"),
+		filepath.Join(standard, "gateway.networking.k8s.io_listenersets.yaml"),
+	}, nil
 }
 
 // Run starts the control plane, hands a client for it to use, runs the tests
@@ -103,7 +107,7 @@ func RunWithConfig(m *testing.M, use func(*rest.Config, client.Client)) int {
 		fmt.Println("find the Gateway API CRDs:", err)
 		return 1
 	}
-	env := &envtest.Environment{CRDDirectoryPaths: []string{gatewayCRDs}, ErrorIfCRDPathMissing: true}
+	env := &envtest.Environment{CRDDirectoryPaths: gatewayCRDs, ErrorIfCRDPathMissing: true}
 	cfg, err := env.Start()
 	if err != nil {
 		fmt.Println("start envtest:", err)

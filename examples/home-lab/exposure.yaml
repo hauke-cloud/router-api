@@ -7,7 +7,8 @@
 #
 # has the ports of its listeners let through to its addresses, by the Hetzner
 # firewall (network.yaml) and by the routers (config.yaml), and closed again
-# when it goes.
+# when it goes. A ListenerSet the Gateway accepted adds its listeners to the
+# Gateway's.
 apiVersion: router.hauke.cloud/v1alpha1
 kind: RouterExposure
 metadata:
@@ -15,6 +16,7 @@ metadata:
 spec:
   gateways:
     # Which namespaces' Gateways may ask, next to this one. Whoever can
-    # create a Gateway elsewhere cannot open a port with it.
+    # create a Gateway elsewhere cannot open a port with it. ListenerSets
+    # are let in by those Gateways (spec.allowedListeners), not here.
     namespaces:
       - ingress

@@ -144,11 +144,43 @@ of route is attached to them, or whether one is yet.
   able to create a Gateway somewhere is not enough to open a port on the routers.
 - A Gateway without an address yet, a listener with an implementation's own protocol, and an
   address that is a host name are left out; `status.gateways` says which and why.
-- Listeners that come from a `ListenerSet` are not read.
+- The listeners of a `ListenerSet` count as its Gateway's once the Gateway has accepted it
+  (`Accepted` is `True` in the ListenerSet's status); see [below](#listenersets).
 - If the cluster does not serve Gateways (any more), nothing is closed: the status stays as it
   was and `Ready` is `False` with reason `GatewayAPIUnavailable`.
 - With the managers confined to one namespace (`watchNamespace` in the chart), only that
   namespace's Gateways are seen.
+
+### ListenerSets
+
+A [ListenerSet](https://gateway-api.sigs.k8s.io/reference/api-types/listenerset/) adds listeners to a
+Gateway from another object, possibly in another namespace. Its ports are let through to the
+addresses of the Gateway it names in `spec.parentRef`, like the Gateway's own. It carries no
+annotation: the Gateway's is the one that asks.
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: mail
+  namespace: mail
+spec:
+  parentRef: {name: web, namespace: ingress}
+  listeners:
+    - {name: smtp, protocol: TCP, port: 25}
+```
+
+- Whether a ListenerSet may add to a Gateway is the Gateway's to say, in
+  `spec.allowedListeners`, which allows none unless set. The Gateway's implementation answers
+  with the condition `Accepted` on the ListenerSet, and that is what is read. A ListenerSet that
+  merely points at an exposed Gateway opens nothing.
+- `spec.gateways.namespaces` is about Gateways. A Gateway that may ask decides with
+  `allowedListeners` which namespaces can open ports through it, and the namespace of a
+  ListenerSet does not have to be listed here.
+- `status.listenerSets` lists every ListenerSet that names an asking Gateway, and why one is not
+  exposed.
+- A Gateway API from before ListenerSets (they are in `v1` since 1.5) has none, and nothing
+  else changes.
 
 Two things can follow a RouterExposure, and they are independent of each other:
 

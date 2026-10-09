@@ -131,10 +131,11 @@ rules:
   - apiGroups: ["router.hauke.cloud"]
     resources: ["*"]
     verbs: ["*"]
-  # RouterExposures are computed from the Gateways that ask for it. Read
-  # only, and only if the cluster has the Gateway API at all.
+  # RouterExposures are computed from the Gateways that ask for it and the
+  # ListenerSets attached to them. Read only, and only if the cluster has
+  # the Gateway API at all.
   - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gateways"]
+    resources: ["gateways", "listenersets"]
     verbs: ["get", "list", "watch"]
 {{- end }}
 {{- range $manager, $group := dict "infrastructure-hetzner" "infrastructure.router.hauke.cloud" "config-vyos" "config.router.hauke.cloud" }}

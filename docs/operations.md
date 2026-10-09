@@ -23,11 +23,12 @@ kubectl get router-api                                    # everything, by categ
 The `VyOSConfig` of the same name has the detail: `APIReachable`, `VRRPMaster` (its reason is
 the VRRP state), the VyOS version, and when the configuration was last changed.
 
-What is open for Gateways, and why a Gateway is not among them:
+What is open for Gateways, and why a Gateway or a ListenerSet is not among them:
 
 ```sh
 kubectl get routerexposures                               # rex
 kubectl get rex edge -o jsonpath='{range .status.gateways[*]}{.namespace}/{.name} exposed={.exposed} {.message}{"\n"}{end}'
+kubectl get rex edge -o jsonpath='{range .status.listenerSets[*]}{.namespace}/{.name} of {.gateway} exposed={.exposed} {.message}{"\n"}{end}'
 ```
 
 ## Changing
@@ -37,7 +38,7 @@ kubectl get rex edge -o jsonpath='{range .status.gateways[*]}{.namespace}/{.name
 | change the configuration | edit `commands` or `values` of the `VyOSConfigTemplate` | applied in place, one router at a time |
 | upgrade VyOS | change `image` | routers are replaced, one at a time |
 | resize or move | edit the `HetznerMachineTemplate` | routers are replaced, one at a time |
-| open or close a port | add or remove a listener of an annotated Gateway | the firewall follows at once, the routers in place, one at a time |
+| open or close a port | add or remove a listener of an annotated Gateway, or of a ListenerSet it accepted | the firewall follows at once, the routers in place, one at a time |
 | add or remove routers | `kubectl scale routerdeployment edge --replicas=3` | |
 | hold everything | `spec.paused: true` on the deployment | no rollouts; existing routers stay managed |
 | hands off one object | annotation `router.hauke.cloud/paused` | no controller acts on it |

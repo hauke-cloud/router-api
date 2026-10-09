@@ -31,8 +31,8 @@ internet ──────► Floating IPs "svc" ─┤   (its own address)    
   them. The master forwards them into its tunnel. Which addresses those are,
   every router learns by **eBGP** from the lab router over its own tunnel.
 - **What is open is decided by the Gateways in the lab.** A Gateway annotated
-  with `router.hauke.cloud/expose: routers/edge` has the ports of its listeners
-  let through to its addresses, by the Hetzner firewall and by the routers, and
+  with `router.hauke.cloud/expose: routers/edge` has the ports of its listeners,
+  and of the ListenerSets it accepted, let through to its addresses, by the Hetzner firewall and by the routers, and
   nothing else gets through from the internet apart from ping. No list of
   ports is kept here (`exposure.yaml`).
 - **The operator runs in the lab** and reaches the routers on their public
@@ -82,8 +82,9 @@ them.
   committed in full on Hetzner servers. The per-slot version is validated on a
   real VyOS, not committed on a server.
 - Following Gateways is exercised by `test/system` with a real API server and
-  real Gateway objects, against the fake Hetzner and fake routers. **It has
-  not run on Hetzner or with a Gateway implementation behind it.**
+  real Gateway and ListenerSet objects, against the fake Hetzner and fake
+  routers. **It has not run on Hetzner or with a Gateway implementation behind
+  it.**
 - **Not tested at all: the tunnels and BGP with a peer on the other end.** No
   lab router was connected in any test.
 
