@@ -687,10 +687,14 @@ func (r *Reconciler) observe(ctx context.Context, config *configv1alpha1.VyOSCon
 		return
 	}
 	state, master, fault := vrrp.Summary(vrrp.Parse(output))
-	if master && !fault {
-		conditions.True(&status.Conditions, generation, configv1alpha1.VRRPStateCondition, state, "")
-	} else {
-		conditions.False(&status.Conditions, generation, configv1alpha1.VRRPStateCondition, state, "")
+	// Active is the same fact in the terms core understands: it uses it to
+	// take the standby first when it has a choice.
+	for _, conditionType := range []string{configv1alpha1.VRRPStateCondition, corev1alpha1.ActiveCondition} {
+		if master && !fault {
+			conditions.True(&status.Conditions, generation, conditionType, state, "")
+		} else {
+			conditions.False(&status.Conditions, generation, conditionType, state, "")
+		}
 	}
 	if fault {
 		conditions.False(&status.Conditions, generation, corev1alpha1.HealthyCondition, ReasonVRRPFault, "a VRRP group is in FAULT state")

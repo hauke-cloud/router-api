@@ -526,6 +526,10 @@ func TestVRRPStateAndFault(t *testing.T) {
 	if got := f.condition(configv1alpha1.VRRPStateCondition); got != "True/MASTER" {
 		t.Errorf("VRRPMaster = %s", got)
 	}
+	// What core goes by when it decides which router to touch first.
+	if got := f.condition(corev1alpha1.ActiveCondition); got != "True/MASTER" {
+		t.Errorf("Active = %s", got)
+	}
 
 	f.router.SetVRRP("Name  Interface  VRID  State   Priority  Last Transition\n----  ----  ----  ----  ----  ----\nwan   eth1       10    FAULT  100       5s\n")
 	f.reconcile()

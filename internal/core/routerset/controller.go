@@ -411,6 +411,12 @@ func isReady(router *corev1alpha1.Router) bool {
 	return conditions.IsTrue(router.Status.Conditions, corev1alpha1.ReadyCondition)
 }
 
+// isActive reports whether a router is the one carrying the traffic, as far
+// as its config provider can tell.
+func isActive(router *corev1alpha1.Router) bool {
+	return conditions.IsTrue(router.Status.Conditions, corev1alpha1.ActiveCondition)
+}
+
 // isSettled reports whether a router is in service and runs the configuration
 // its config object describes: nothing is in flight on it.
 //
@@ -429,7 +435,9 @@ func isSettled(router *corev1alpha1.Router, config *unstructured.Unstructured) b
 // its addresses to a peer, one router at a time.
 func (r *Reconciler) scaleDown(ctx context.Context, set *corev1alpha1.RouterSet, routers []corev1alpha1.Router, excess int) ([]corev1alpha1.Router, error) {
 	// Least valuable first: in a slot the group no longer has, broken,
-	// already draining, then newest.
+	// already draining, standby, then newest. The standby before the active
+	// router, because taking the active one first costs a failover, and its
+	// successor's turn then costs a second.
 	victims := slices.Clone(routers)
 	slices.SortStableFunc(victims, func(a, b corev1alpha1.Router) int {
 		if aOut, bOut := outOfRange(set, &a), outOfRange(set, &b); aOut != bOut {
@@ -451,6 +459,12 @@ func (r *Reconciler) scaleDown(ctx context.Context, set *corev1alpha1.RouterSet,
 				return -1
 			}
 			return 1
+		}
+		if isActive(&a) != isActive(&b) {
+			if isActive(&a) {
+				return 1
+			}
+			return -1
 		}
 		return b.CreationTimestamp.Compare(a.CreationTimestamp.Time)
 	})
@@ -511,7 +525,7 @@ func (r *Reconciler) drain(ctx context.Context, router *corev1alpha1.Router) (bo
 // A working router is only changed while every other router is settled: if
 // the change breaks it, the others still carry the traffic. A router that is
 // already out of service is changed first, since it has nothing to lose and
-// the change may be the fix. And while a router that already has the new
+// the change may be the fix; then the standby, and the active router last. And while a router that already has the new
 // configuration has not applied it, nothing further is changed: either it is
 // still at it, or it refused, and then the change itself is the first
 // suspect.
@@ -544,7 +558,7 @@ func (r *Reconciler) syncConfig(ctx context.Context, routers []corev1alpha1.Rout
 			continue
 		case hasSpec[router.Name] && !isSettled(router, configs[router.Name]):
 			return upToDate, nil
-		case !hasSpec[router.Name] && (candidate == nil || (isReady(candidate) && !isReady(router))):
+		case !hasSpec[router.Name] && (candidate == nil || changeRank(router) < changeRank(candidate)):
 			candidate = router
 		}
 	}
@@ -568,6 +582,19 @@ func (r *Reconciler) syncConfig(ctx context.Context, routers []corev1alpha1.Rout
 	}
 	// Not up to date yet: it has the configuration, it does not run it.
 	return upToDate, nil
+}
+
+// changeRank orders routers by how little is lost if a configuration change
+// goes wrong on them: one that is out of service anyway, then the standby,
+// then the router that carries the traffic.
+func changeRank(router *corev1alpha1.Router) int {
+	switch {
+	case !isReady(router):
+		return 0
+	case !isActive(router):
+		return 1
+	}
+	return 2
 }
 
 // count fills in the replica counters and returns how long until a router

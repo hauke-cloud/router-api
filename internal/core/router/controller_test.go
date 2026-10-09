@@ -397,3 +397,22 @@ func TestDeletionRemovesTheServerBeforeTheConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestMirrorsWhichRouterIsActive(t *testing.T) {
+	f := newFixture(t)
+	f.ready()
+	if conditions.IsTrue(f.router().Status.Conditions, corev1alpha1.ActiveCondition) {
+		t.Fatal("Active before the provider said so")
+	}
+
+	config := f.config()
+	conditions.True(&config.Status.Conditions, config.Generation, corev1alpha1.ActiveCondition, "MASTER", "")
+	if err := k8s.Status().Update(f.ctx, config); err != nil {
+		t.Fatal(err)
+	}
+	f.reconcile()
+
+	if !conditions.IsTrue(f.router().Status.Conditions, corev1alpha1.ActiveCondition) {
+		t.Error("Active is not mirrored")
+	}
+}

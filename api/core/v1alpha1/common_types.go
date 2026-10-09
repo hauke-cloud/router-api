@@ -135,6 +135,11 @@ const (
 	// HealthyCondition is True while the config provider can reach the router
 	// and finds it working.
 	HealthyCondition = "Healthy"
+	// ActiveCondition is True while the router is the one of its group that
+	// carries the traffic, as far as its config provider can tell: the VRRP
+	// master, for instance. Where there is a choice, the routers that are
+	// not active are replaced and reconfigured first.
+	ActiveCondition = "Active"
 	// DrainedCondition is True once a router asked to drain no longer holds
 	// any address a peer could hold.
 	DrainedCondition = "Drained"

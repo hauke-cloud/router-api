@@ -17,6 +17,7 @@ kubectl get router-api                                    # everything, by categ
 | `BootstrapReady` | the data the server boots with has been published | config provider |
 | `ConfigApplied` | it runs the configuration its config object currently describes | config provider |
 | `Healthy` | the API answers and no VRRP group is in fault | config provider |
+| `Active` | the router of its group that carries the traffic (the VRRP master) | config provider |
 | `Drained` | asked to hand over, and no longer VRRP master | config provider |
 
 The `VyOSConfig` of the same name has the detail: `APIReachable`, `VRRPMaster` (its reason is
@@ -44,7 +45,8 @@ How routers are replaced is the deployment's `strategy.type`:
 
 Either way a working router is asked to hand over before it is removed, so
 replacing the active one is a failover it announces, not one the others have to
-detect. With slots, `kubectl get routers -L router.hauke.cloud/slot` shows who
+detect. And the standby is taken first, so that a rollout costs one failover
+and not two. With slots, `kubectl get routers -L router.hauke.cloud/slot` shows who
 is where.
 
 Watch a rollout with `kubectl get rd,rs,rt -w`. A deployment's `RollingOut` condition is true

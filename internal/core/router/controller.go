@@ -142,6 +142,8 @@ func (r *Reconciler) reconcileNormal(ctx context.Context, router *corev1alpha1.R
 		ReasonWaitingForProvider, "the config provider has not reported yet")
 	conditions.Mirror(&status.Conditions, generation, corev1alpha1.HealthyCondition, contract.Condition(config, corev1alpha1.HealthyCondition),
 		ReasonWaitingForProvider, "the config provider has not reported yet")
+	conditions.Mirror(&status.Conditions, generation, corev1alpha1.ActiveCondition, contract.Condition(config, corev1alpha1.ActiveCondition),
+		ReasonWaitingForProvider, "the config provider has not reported yet")
 	if _, draining := router.Annotations[corev1alpha1.DrainAnnotation]; draining {
 		conditions.Mirror(&status.Conditions, generation, corev1alpha1.DrainedCondition, contract.Condition(config, corev1alpha1.DrainedCondition),
 			ReasonWaitingForProvider, "the config provider has not reported yet")

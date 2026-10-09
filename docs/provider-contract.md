@@ -53,14 +53,19 @@ Boots a router and keeps it configured.
 | `status.version` | the software version the router reports |
 | `status.conditions[type=ConfigApplied]` | true while the router runs what the object currently describes |
 | `status.conditions[type=Healthy]` | true while the router can be reached and is in order |
+| `status.conditions[type=Active]` | optional: true while this router is the one of its group that carries the traffic |
 | `status.conditions[type=Drained]` | see below |
 
 The bootstrap data is written once. It has to keep describing the server that was created from
 it.
 
 `ConfigApplied` carries `observedGeneration`. Core disregards a verdict about an older
-generation of the object. `Healthy` and `Drained` are about the router itself and are taken as
+generation of the object. `Healthy`, `Active` and `Drained` are about the router itself and are taken as
 they are.
+
+Where core has a choice of which router to replace or reconfigure next, it takes one that is not
+`Active` first: replacing the active router first costs a failover, and replacing its successor
+afterwards a second one.
 
 The provider finds its owner `Router` through the controller owner reference. The router's
 addresses are in `Router.status.addresses`, and the other routers of the group are the Routers

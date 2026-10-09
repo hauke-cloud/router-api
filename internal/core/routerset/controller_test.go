@@ -711,3 +711,63 @@ func TestScaleDownFreesTheHighestSlot(t *testing.T) {
 		t.Errorf("slots = %v, want 0 and 1 to remain", got)
 	}
 }
+
+// setActive plays the Router controller reporting which router carries the
+// traffic.
+func (f *fixture) setActive(name string, active bool) {
+	f.t.Helper()
+	router := &corev1alpha1.Router{}
+	if err := k8s.Get(f.ctx, types.NamespacedName{Namespace: f.namespace, Name: name}, router); err != nil {
+		f.t.Fatal(err)
+	}
+	status := metav1.ConditionFalse
+	if active {
+		status = metav1.ConditionTrue
+	}
+	conditions.Set(&router.Status.Conditions, router.Generation, corev1alpha1.ActiveCondition, status, "Test", "")
+	if err := k8s.Status().Update(f.ctx, router); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// Taking the standby first costs nothing. Taking the active router first
+// costs a failover, and then its successor's turn costs a second one.
+func TestTheStandbyGoesFirst(t *testing.T) {
+	for _, active := range []int{0, 1} {
+		f := newFixture(t, 2)
+		routers := f.allReady()
+		f.setActive(routers[active].Name, true)
+		f.setActive(routers[1-active].Name, false)
+
+		f.scale(1)
+		f.reconcile()
+
+		for _, router := range f.routers() {
+			_, draining := router.Annotations[corev1alpha1.DrainAnnotation]
+			if draining && router.Name == routers[active].Name {
+				t.Errorf("the active router %s was asked to hand over although the standby could have gone", router.Name)
+			}
+			if !draining && router.Name == routers[1-active].Name {
+				t.Errorf("the standby %s was not the one chosen", router.Name)
+			}
+		}
+	}
+}
+
+func TestAConfigChangeReachesTheStandbyFirst(t *testing.T) {
+	const changed = "set system time-zone Europe/Berlin\n"
+	for _, active := range []int{0, 1} {
+		f := newFixture(t, 2)
+		routers := f.allReady()
+		f.setActive(routers[active].Name, true)
+		f.setActive(routers[1-active].Name, false)
+
+		f.changeCommands(changed)
+		f.reconcile()
+
+		// If the change is bad, it is the standby that finds out.
+		if got := f.updated(changed); len(got) != 1 || got[0] != routers[1-active].Name {
+			t.Errorf("updated = %v, want the standby %s first", got, routers[1-active].Name)
+		}
+	}
+}
