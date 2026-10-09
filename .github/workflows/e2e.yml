@@ -1,0 +1,94 @@
+---
+name: End to end
+
+# Runs router-api against Hetzner Cloud for real: the managers create servers,
+# the servers boot VyOS from the generated user data, a configuration change is
+# applied in place, both routers are replaced, and everything is deleted again.
+#
+# It needs the repository secret HCLOUD_TOKEN: a read/write token of a Hetzner
+# project used for nothing else. The test refuses to start in a project that
+# already has servers managed by router-api, and deletes whatever router-api
+# created in it when it is done. Without the secret the job does nothing.
+#
+# A run takes about a quarter of an hour and two small servers for that long.
+on:
+  workflow_dispatch:
+    inputs:
+      vyos-image:
+        description: VyOS image the routers run
+        required: false
+        default: ghcr.io/hauke-cloud/vyos:latest
+      strategy:
+        description: How the routers are replaced
+        type: choice
+        options: [Slots, Surge]
+        default: Slots
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - "cmd/**"
+      - "internal/**"
+      - "test/e2e/**"
+      - "hack/e2e-hetzner.sh"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/e2e.yml"
+
+# One at a time: two runs in one project would each find the other's servers.
+concurrency:
+  group: e2e-hetzner
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+      E2E_VYOS_IMAGE: ${{ inputs.vyos-image || 'ghcr.io/hauke-cloud/vyos:latest' }}
+      E2E_STRATEGY: ${{ inputs.strategy || 'Slots' }}
+      RUN: ${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Check for the token
+        id: token
+        run: |
+          if [ -z "${HCLOUD_TOKEN}" ]; then
+            echo "::notice::The secret HCLOUD_TOKEN is not set; the end-to-end test was not run."
+            echo "present=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "present=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.token.outputs.present == 'true'
+
+      - uses: actions/setup-go@v7
+        if: steps.token.outputs.present == 'true'
+        with:
+          go-version: "1.27"
+
+      - name: Create the network, the Primary IPs and the Floating IP
+        if: steps.token.outputs.present == 'true'
+        run: |
+          hack/e2e-hetzner.sh setup "${RUN}" "${GITHUB_ENV}"
+
+      - name: Run the test
+        if: steps.token.outputs.present == 'true'
+        run: |
+          # The Surge strategy has no slots, and so no address per slot.
+          if [ "${E2E_STRATEGY}" != "Slots" ]; then
+            unset E2E_PRIMARY_IPS
+          fi
+          make e2e
+
+      # Also when the test failed or the run was cancelled: nothing may be
+      # left running. The test deletes the servers itself; this catches the
+      # ones of a run that did not get that far.
+      - name: Remove everything
+        if: always() && steps.token.outputs.present == 'true'
+        run: |
+          hack/e2e-hetzner.sh teardown "${RUN}"

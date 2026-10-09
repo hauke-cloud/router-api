@@ -12,6 +12,9 @@
 //	E2E_VYOS_IMAGE        VyOS container image the servers can pull or already have
 //	E2E_SERVER_IMAGE      optional: server image or snapshot ID, default ubuntu-24.04
 //	E2E_FLOATING_IP       optional: an unassigned Floating IP that follows the VRRP master
+//	E2E_PRIMARY_IPS       optional: names of two unassigned Primary IPs with auto-delete off,
+//	                      comma separated. Runs the group with the Slots strategy: each router
+//	                      in a slot with its own address, replaced in place.
 //	E2E_SSH_KEY           optional: name of a Hetzner SSH key for the hosts, for debugging
 //	E2E_KEEP              optional: if the test fails, leave the servers for inspection
 //
@@ -27,6 +30,7 @@ import (
 	"net/netip"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -80,6 +84,47 @@ type suite struct {
 	namespace  string
 	hetzner    *hcloud.Client
 	floatingIP string
+	// primaryIPs are the names of the Primary IPs by slot; empty for a
+	// group without slots.
+	primaryIPs []string
+}
+
+func (s *suite) slots() bool { return len(s.primaryIPs) > 0 }
+
+// misplaced returns a description of the first router that is not at the
+// Primary IP of its slot, or does not run the values of its slot, or "".
+func (s *suite) misplaced() string {
+	s.t.Helper()
+	servers := s.servers()
+	routers := s.routers()
+	seen := map[string]bool{}
+	for i := range routers {
+		router := &routers[i]
+		if !router.DeletionTimestamp.IsZero() {
+			continue
+		}
+		label := router.Labels[corev1alpha1.SlotLabel]
+		slot, err := strconv.Atoi(label)
+		if err != nil || slot >= len(s.primaryIPs) || seen[label] {
+			return fmt.Sprintf("router %s has slot %q", router.Name, label)
+		}
+		seen[label] = true
+		primary, _, err := s.hetzner.PrimaryIP.GetByName(s.ctx, s.primaryIPs[slot])
+		if err != nil || primary == nil {
+			s.t.Fatalf("primary IP %s: %v", s.primaryIPs[slot], err)
+		}
+		server := servers[router.Name]
+		if server == nil {
+			return fmt.Sprintf("router %s in slot %d has no server", router.Name, slot)
+		}
+		if !server.PublicNet.IPv4.IP.Equal(primary.IP) {
+			return fmt.Sprintf("router %s in slot %d is at %s, the slot's address is %s", router.Name, slot, server.PublicNet.IPv4.IP, primary.IP)
+		}
+	}
+	if len(seen) != len(s.primaryIPs) {
+		return fmt.Sprintf("%d of %d slots are filled", len(seen), len(s.primaryIPs))
+	}
+	return ""
 }
 
 func (s *suite) logf(format string, args ...any) {
@@ -303,6 +348,11 @@ set high-availability vrrp group wan transition-script master '/usr/local/bin/hc
 {{- if .Values.floatingIP }}
 set interfaces dummy dum0 address {{ .Values.floatingIP }}/32
 {{- end }}
+{{- if .Values.own }}
+# Something every router has of its own, by slot.
+set interfaces dummy dum1 address {{ .Values.own }}
+set interfaces dummy dum1 description 'slot {{ .Router.Slot }}'
+{{- end }}
 
 set firewall ipv4 input filter default-action drop
 set firewall ipv4 input filter rule 10 action accept
@@ -377,6 +427,7 @@ func (s *suite) create() {
 						{Name: "network", ValueSource: configv1alpha1.ValueSource{Value: ptr.To(networkCIDR.String())}},
 						{Name: "gateway", ValueSource: configv1alpha1.ValueSource{Value: ptr.To(networkCIDR.Addr().Next().String())}},
 						{Name: "floatingIP", ValueSource: configv1alpha1.ValueSource{Value: ptr.To(s.floatingIP)}},
+						{Name: "own", ValueSource: configv1alpha1.ValueSource{Value: ptr.To("")}},
 						{Name: "token", ValueSource: configv1alpha1.ValueSource{SecretKeyRef: &corev1.SecretKeySelector{
 							LocalObjectReference: corev1.LocalObjectReference{Name: "hcloud"}, Key: "token",
 						}}},
@@ -405,6 +456,20 @@ func (s *suite) create() {
 		},
 	}
 	for _, object := range objects {
+		if s.slots() {
+			switch typed := object.(type) {
+			case *corev1alpha1.RouterDeployment:
+				typed.Spec.Strategy.Type = corev1alpha1.SlotsStrategy
+			case *infrav1alpha1.HetznerMachineTemplate:
+				typed.Spec.Template.Spec.PrimaryIPv4BySlot = s.primaryIPs
+			case *configv1alpha1.VyOSConfigTemplate:
+				for slot := range s.primaryIPs {
+					typed.Spec.Template.Spec.Slots = append(typed.Spec.Template.Spec.Slots, configv1alpha1.SlotSpec{Values: []configv1alpha1.Value{
+						{Name: "own", ValueSource: configv1alpha1.ValueSource{Value: ptr.To(fmt.Sprintf("192.0.2.%d/32", 100+slot))}},
+					}})
+				}
+			}
+		}
 		if err := k8s.Create(s.ctx, object); err != nil {
 			s.t.Fatalf("create %T: %v", object, err)
 		}
@@ -451,6 +516,9 @@ func TestRoutersOnHetzner(t *testing.T) {
 		hetzner:    hcloud.NewClient(hcloud.WithToken(env(t, "HCLOUD_TOKEN")), hcloud.WithApplication("router-api-e2e", "dev")),
 		floatingIP: os.Getenv("E2E_FLOATING_IP"),
 	}
+	if names := os.Getenv("E2E_PRIMARY_IPS"); names != "" {
+		s.primaryIPs = strings.Split(names, ",")
+	}
 	if leftovers := s.serverNames(); len(leftovers) > 0 {
 		t.Fatalf("the project already has servers managed by router-api: %v", leftovers)
 	}
@@ -488,6 +556,12 @@ func TestRoutersOnHetzner(t *testing.T) {
 	s.eventually("two routers to be ready", 15*time.Minute, func() bool { return len(s.ready()) == 2 }, nil)
 	first := s.ready()
 	s.logf("routers %v ready %s after the deployment was created", first, time.Since(began).Round(time.Second))
+	if s.slots() {
+		if problem := s.misplaced(); problem != "" {
+			t.Fatal(problem)
+		}
+		s.logf("every router is at the Primary IP of its slot")
+	}
 	if got := s.serverNames(); !slices.Equal(got, first) {
 		t.Fatalf("servers = %v, routers = %v", got, first)
 	}
@@ -501,6 +575,21 @@ func TestRoutersOnHetzner(t *testing.T) {
 			return fmt.Sprintf("only %v are ready; the group must never drop below 2", ready)
 		}
 		return ""
+	}
+	// With slots the promise during a replacement is a different one: a
+	// slot holds one router, so never more than two exist, and they go one
+	// after the other, so never none is ready.
+	duringReplacement := neverShort
+	if s.slots() {
+		duringReplacement = func() string {
+			if n := len(s.routers()); n > 2 {
+				return fmt.Sprintf("%d routers exist; a slot holds one", n)
+			}
+			if len(s.ready()) == 0 {
+				return "no router is ready; they have to be replaced one after the other"
+			}
+			return ""
+		}
 	}
 	var reachability *probe
 	if s.floatingIP != "" {
@@ -556,8 +645,8 @@ func TestRoutersOnHetzner(t *testing.T) {
 				return false
 			}
 		}
-		return true
-	}, neverShort)
+		return !s.slots() || s.misplaced() == ""
+	}, duringReplacement)
 	s.logf("replaced %v with %v in %s", first, s.ready(), time.Since(began).Round(time.Second))
 
 	if reachability != nil {

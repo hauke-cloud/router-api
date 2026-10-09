@@ -115,7 +115,10 @@ make help
 ```
 
 `make e2e` runs the managers against Hetzner Cloud itself and creates billed servers;
-[test/e2e](test/e2e/e2e_test.go) says what it needs.
+[test/e2e](test/e2e/e2e_test.go) says what it needs, and `hack/e2e-hetzner.sh` creates and
+removes the network and addresses for it. The workflow *End to end* does both on every change
+to `main` and on request, if the repository has an `HCLOUD_TOKEN` secret for a Hetzner project
+of its own.
 
 `make test` runs every controller against a real kube-apiserver. `test/system` runs all three
 managers together through the life of a router group, with a fake Hetzner whose servers are fake

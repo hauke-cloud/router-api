@@ -68,14 +68,15 @@ them.
 - The manifests are submitted to a real API server and rendered by
   `internal/examples/examples_test.go`, and the VyOS configuration of slot 0 is
   validated on a real VyOS (`make test-vyos`).
-- Slots are exercised by `test/system`: a router in each slot with its address
-  and its values, replacement in place, and a dead router coming back in its
-  slot. That test runs against a fake Hetzner.
-- **Slots have not run on Hetzner yet.** An earlier version of this example,
-  with one tunnel shared by both routers, was committed in full on Hetzner
-  servers and survived a failover and a rolling replacement there
-  ([docs/spike-vyos-container.md](../../docs/spike-vyos-container.md)). Primary
-  IPs per slot and replacement in place have only been tested against the fake.
+- Slots are exercised by `test/system` against a fake Hetzner, and by `make e2e`
+  on Hetzner itself: a router in each slot at the slot's Primary IP, a
+  configuration change in place, and both routers replaced in their slots with
+  the Floating IP reachable throughout
+  ([docs/spike-vyos-container.md](../../docs/spike-vyos-container.md)).
+- **This example's own configuration has not run on Hetzner in its current
+  form.** An earlier version, with one tunnel shared by both routers, was
+  committed in full on Hetzner servers. The per-slot version is validated on a
+  real VyOS, not committed on a server.
 - **Not tested at all: the tunnels and BGP with a peer on the other end.** No
   lab router was connected in any test.
 

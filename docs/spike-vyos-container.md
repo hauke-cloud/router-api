@@ -124,6 +124,21 @@ What the first runs of it found, all fixed:
 | A configuration change reached both routers within seconds of each other. The RouterSet decided whether a router had applied a change by the Router's copy of `ConfigApplied`, which is one poll behind the config object. | It reads the config object. |
 | At the end of a replacement the Floating IP was assigned to nobody. The new master tried to take it while the server that held it was being deleted. | `hcloud-vrrp-failover` tries again every two seconds until it has succeeded or its timeout is up. |
 
+### Slots, and the stock image
+
+On 2026-10-09 the same test ran a group with the Slots strategy, and for the
+first time from Hetzner's stock `ubuntu-24.04` image, so that every server
+installed podman and pulled the published VyOS image itself. It passed on the
+first run.
+
+| | Observed |
+| --- | --- |
+| Two routers from a new `RouterDeployment`, stock image | `Ready` 3 min 16 s after the deployment was created, each with the Primary IP named for its slot |
+| A change to `values` | applied in place in 30 s |
+| A change to `files` | both routers replaced in their slots in 7 min 1 s; never more than two routers, never none `Ready`; each successor at the address of its slot |
+| The Floating IP, probed four times a second throughout | longest interruption 300 ms |
+| The Primary IPs afterwards | still there and unassigned; the IPv6 addresses Hetzner had created with the servers were gone with them |
+
 A router's firewall is the host's: VyOS runs in the host's network namespace.
 A rule set with a default of drop on input also closes SSH to the host unless
 it says otherwise.
@@ -137,5 +152,8 @@ it says otherwise.
   cannot move an address, VRRP and every condition look healthy while the
   address is somewhere else. Nothing checks that the Floating IP is on the
   master.
-- More than one run. The end-to-end test passed once after the fixes above; it
-  has not been repeated to see how stable its timings are.
+- Many runs. The end-to-end test has passed once with the Surge strategy and
+  once with Slots; its timings are single samples.
+- The order of a replacement on real routers. The standby is meant to go
+  first, so that a rollout costs one failover; which router went first in the
+  runs above was not recorded.
