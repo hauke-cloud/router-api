@@ -1,137 +1,222 @@
+<!-- llm-readme-management spec=1 commit=6b2076359eff8df0f1c5d88d4f84cc0158c803d0 template=golang model=qwen3.8-27b-q4 digest=b3d4b07f2e19 generated=2026-10-12T11:21:28Z -->
+<a href="https://hauke.cloud" target="_blank"><img src="https://img.shields.io/badge/home-hauke.cloud-brightgreen" alt="hauke.cloud" style="display: block;" /></a>
+<a href="https://github.com/hauke-cloud" target="_blank"><img src="https://img.shields.io/badge/github-hauke.cloud-blue" alt="hauke.cloud Github Organisation" style="display: block;" /></a>
+<a href="https://github.com/hauke-cloud/llm-readme-management" target="_blank"><img src="https://img.shields.io/badge/template-golang-orange" alt="Repository type - golang" style="display: block;" /></a>
+
+
 # router-api
 
-Routers as Kubernetes objects, in the way [Cluster API](https://cluster-api.sigs.k8s.io) does
-it for cluster nodes: you describe a group of routers and how they are configured, and
-controllers create the servers, configure them, watch them, replace them when they break and
-roll changes through them without the group going down.
 
-The first and so far only implementation runs [VyOS](https://vyos.io) on
-[Hetzner Cloud](https://www.hetzner.com/cloud). Both halves are providers behind a contract,
-so another cloud or another router OS is a new provider, not a change to the core.
+<img src="https://raw.githubusercontent.com/hauke-cloud/.github/main/resources/img/organisation-logo-small.png" alt="hauke.cloud logo" width="109" height="123" align="right">
 
-> **Status: early.** The controllers are tested against a real Kubernetes API server, the VyOS
-> side against a real VyOS, and routers have been bootstrapped, configured and failed over on
-> Hetzner Cloud. No lab has been connected through one yet.
-> [docs/spike-vyos-container.md](docs/spike-vyos-container.md) lists exactly what is
-> established, how, and what is not.
 
-## The objects
+<llm header hint="Name the Go module path and say whether this is a service, a CLI or a library.">
 
+This Go service (module `github.com/hauke-cloud/router-api`) manages routers as Kubernetes custom resources, with VyOS-in-containers on Hetzner Cloud as the current backend. You deploy it as a Helm chart into your cluster to get rolling updates, in-place configuration, and self-healing for a small fleet of edge or home-lab routers. It is a service, not a library or CLI.
+
+</llm>
+
+
+## :book: Description
+
+<llm description>
+
+router-api manages network routers the way Cluster API manages nodes: you declare router objects as Kubernetes CRDs, and three controller managers reconcile them into running infrastructure. The current backend runs VyOS in containers on Hetzner Cloud servers, bootstrapped automatically (cloud-init installs podman, starts the VyOS container, drops a first-boot script) and configured in place over a pinned-certificate REST API with commit-confirm revert timers so a bad change reverts itself.
+
+You install a Helm chart into your Kubernetes cluster, write a small set of manifests, and the managers handle creating Hetzner servers behind a management firewall, applying configuration one router at a time, and keeping the fleet healthy.
+
+- Rolling updates with Surge or Slots strategy, one router at a time
+- In-place VyOS configuration via REST API with automatic revert on failure
+- VRRP failover over the Hetzner private network; Floating IPs follow the new master
+- Health checks that reboot a stuck router, then replace it if the reboot fails
+- Gateway-driven exposure: listener ports from annotated Gateways propagate to firewalls and router config
+
+The project is early-stage: routers have been bootstrapped, configured, and failed over on Hetzner, but no lab has been connected through one yet.
+
+</llm>
+
+
+## :clipboard: Requirements
+
+<llm requirements hint="Give the Go version from the go directive in go.mod. Mention Docker only if the repository actually builds an image.">
+
+- Go 1.27.1 (the `go` directive in `go.mod`).
+- Helm, for installing the chart into a Kubernetes cluster.
+- A Kubernetes cluster where the three manager Deployments will run.
+- Docker or Podman for `make image` and `make test-vyos`; multi-arch image builds additionally require Docker Buildx.
+- The `ghcr.io/hauke-cloud/vyos` container image, for `make test-vyos`.
+- `HCLOUD_TOKEN` and a dedicated Hetzner Cloud project, for `make e2e` (the test creates and bills real servers for up to ~25 minutes).
+- Network access to download envtest binaries (kube-apiserver and etcd v1.37) when running `make test`.
+- pre-commit, mandatory for contributors.
+- A Gateway API implementation in the cluster (gateway-api v1 ≥ 1.5) if you use `RouterExposure`-driven firewall and configuration updates.
+
+</llm>
+
+
+## 🚀 Getting started
+
+<llm getting_started hint="Cover go build, go run and go test with the real package paths. If a Makefile or Taskfile exists, prefer its targets over raw go commands.">
+
+1. Clone the repository and enter it.
+
+```bash
+git clone https://github.com/hauke-cloud/router-api.git
+cd router-api
 ```
-RouterDeployment ──► RouterSet ──► Router ──┬─► RouterMachine ──► HetznerMachine    ◄── HetznerMachineTemplate
-                                            └─► VyOSConfig                           ◄── VyOSConfigTemplate
-RouterHealthCheck ── selects Routers        HetznerRouterNetwork: token, network, firewall, placement group
-RouterExposure    ◄── Gateways that ask     read by the firewall and by the configuration
+
+2. Fetch and verify all Go module dependencies (requires Go 1.27).
+
+```bash
+make tidy
 ```
 
-| Kind | Group | What it is |
-| --- | --- | --- |
-| `RouterDeployment` | `router.hauke.cloud` | A group of routers that back each other up, and the way to change them. |
-| `RouterSet` | | A number of identical routers. Created by a deployment, one per revision. |
-| `Router` | | One router: a machine and its configuration. **The object to look at.** |
-| `RouterMachine` | | The server a router runs on, whatever the provider. |
-| `RouterHealthCheck` | | Reboots, then replaces, routers that stop working. |
-| `RouterExposure` | | The addresses and ports to let through, collected from annotated Gateways. |
-| `HetznerMachine`, `HetznerMachineTemplate` | `infrastructure.router.hauke.cloud` | A Hetzner Cloud server. |
-| `HetznerRouterNetwork` | | What the routers of a group share at Hetzner. |
-| `VyOSConfig`, `VyOSConfigTemplate` | `config.router.hauke.cloud` | What a VyOS router boots and runs. |
+3. Build the three manager binaries (`core`, `infrastructure-hetzner`, `config-vyos`) into `bin/`.
 
-You write a `HetznerRouterNetwork`, the two templates, a `RouterDeployment` and usually a
-`RouterHealthCheck`. Everything else is created for you.
-[examples/home-lab](examples/home-lab) is a complete set: a pair of routers that puts a home lab
-with a changing address behind stable public IPs.
+```bash
+make build
+```
 
-## How a router comes to be
+4. Run the full test suite, which includes the system test that boots all three managers against an envtest API server with a fake Hetzner cloud and fake routers.
 
-1. The **config provider** generates the router's credentials (an API key and a self-signed
-   certificate) and its bootstrap data: cloud-init user data that installs podman on a stock
-   Ubuntu, starts the [VyOS container](https://github.com/hauke-cloud/vyos) and drops a
-   first-boot script into VyOS's config volume.
-2. The **infrastructure provider** creates the server with that user data, behind a firewall
-   that lets the management port through from the operator only.
-3. VyOS boots and runs the script, which enables its REST API with the generated key and
-   certificate and locks the default account. Nothing reaches into the router from outside to
-   do this, and the key and certificate are this router's alone.
-4. The config provider connects, trusting exactly that certificate, and applies the
-   configuration: your `set` commands, rendered as a template with the router's addresses,
-   its peers and values from Secrets.
+```bash
+make test
+```
 
-## Changing routers
+If `make test` fails because it cannot find the envtest binaries, download them first:
 
-**Configuration** (`commands`, `values`) is applied to the running routers, one at a time and
-only while the others are fine. Each change is committed with a revert timer and confirmed over
-the same connection; a change that cuts the operator off is therefore never confirmed and undoes
-itself. A change the router refuses is rolled back and goes no further than the first router.
+```bash
+make envtest-assets
+```
 
-**Everything else** (the image, files, the server type) replaces the routers, one after the
-other, in one of two ways:
+At this point you have three working binaries in `bin/` and a passing test suite. Deploying to a real cluster is a Helm install (`make helm-install`) into a Kubernetes cluster that can reach your routers' management port; see the usage section for that.
 
-- `Surge`, the default: a new router is built and has to prove itself before an old one is asked
-  to hand over and is deleted. There are never fewer working routers than you asked for. The
-  routers are interchangeable.
-- `Slots`: every router has a slot that keeps a public address and values of its own across
-  replacements, so that, for instance, the other end can keep a tunnel to every router. A router
-  is replaced in its slot: it hands over and is removed first, and the group is one router short
-  until its successor works.
+</llm>
 
-**What is open** does not have to be a list kept by hand. A `RouterExposure` collects the
-addresses and listener ports of the [Gateways](https://gateway-api.sigs.k8s.io) annotated with
-`router.hauke.cloud/expose`, and of the ListenerSets those have accepted. The firewall follows it, and the routers do the way they follow
-any change of their configuration: one at a time, the active one last
-([docs/configuration.md](docs/configuration.md#exposing-what-gateways-listen-on)).
 
-A router is `Ready` while it is in service. Whether it already runs the latest configuration is
-a separate condition, `ConfigApplied`: a router that is applying a change, or refused one, still
-forwards traffic on the configuration it had.
+## :airplane: Usage
 
-## When a router breaks
+<llm usage hint="For a library, show a small import-and-call example using real exported identifiers. For a service or CLI, show how it is started and the flags or subcommands it accepts.">
 
-Failover between the routers is theirs alone: VRRP, and a helper in the VyOS image that moves
-the Hetzner Floating IPs to the new master. It does not depend on the operator, the cluster it
-runs in, or the connection between them.
+Install the chart into your Kubernetes cluster:
 
-The operator repairs: a `RouterHealthCheck` reboots a router that stays unready, and replaces
-it if that does not help. If more than `maxUnhealthy` routers look broken at once it does
-nothing, because seen from one vantage point that is far more likely to be the vantage point.
-
-## Installing
-
-```sh
-helm install router-api oci://ghcr.io/hauke-cloud/charts/router-api \
+```bash
+helm upgrade --install router-api oci://ghcr.io/hauke-cloud/charts/router-api \
   --namespace router-api --create-namespace
 ```
 
-Three Deployments, one per manager (`core`, `infrastructure-hetzner`, `config-vyos`), each with
-its own ServiceAccount. Each installs the CustomResourceDefinitions of its API group when it
-starts. The `config-vyos` manager is the one that connects to the routers.
+The chart deploys three manager Deployments (`core`, `infrastructure-hetzner`, `config-vyos`) from the image `ghcr.io/hauke-cloud/router-api`. Each manager installs its own CRDs at start-up (`crds.install` defaults to `true`). Set `watchNamespace` to confine all managers to a single existing namespace; leave it empty (the default) to watch all namespaces.
 
-## Documentation
+Declare routers by applying the CRD manifests. The `examples/home-lab/` directory contains a complete working set: a `HetznerRouterNetwork`, `HetznerMachineTemplate` and `VyOSConfigTemplate`, a `RouterDeployment` (default `replicas: 2`, `strategy.type: Surge`), a `RouterHealthCheck`, and a `RouterExposure`. Once applied, the managers create Hetzner servers, bootstrap VyOS containers, and apply configuration over the pinned-certificate REST API.
 
-- [docs/configuration.md](docs/configuration.md): writing a router's configuration
-- [docs/operations.md](docs/operations.md): watching, changing, debugging
-- [docs/provider-contract.md](docs/provider-contract.md): what a provider has to implement
-- [docs/spike-vyos-container.md](docs/spike-vyos-container.md): what was verified about VyOS, and how
+Run the test suite from the repository root:
 
-## Development
-
-```sh
-make check        # format, lint, generated code, chart, all tests
-make test         # unit, integration (envtest) and the system test; plain `go test ./...` refuses to skip these
-make test-vyos    # the config provider against a real VyOS container (needs podman and the image)
-make e2e          # everything against Hetzner Cloud (needs a token; creates servers)
-make help
+```bash
+make test
 ```
 
-`make e2e` runs the managers against Hetzner Cloud itself and creates billed servers;
-[test/e2e](test/e2e/e2e_test.go) says what it needs, and `hack/e2e-hetzner.sh` creates and
-removes the network and addresses for it. The workflow *End to end* does both on every change
-to `main` and on request, if the repository has an `HCLOUD_TOKEN` secret for a Hetzner project
-of its own.
+This runs unit tests, envtest-backed integration tests, and the system test (all three managers against a fake Hetzner and fake routers). To exercise a real VyOS container:
 
-`make test` runs every controller against a real kube-apiserver. `test/system` runs all three
-managers together through the life of a router group, with a fake Hetzner whose servers are fake
-routers booted from the generated user data.
+```bash
+make test-vyos
+```
 
-## License
+This requires podman (rootless is enough) and the `ghcr.io/hauke-cloud/vyos:dev` image. The `make e2e` target provisions billed Hetzner servers for up to 90 minutes; it needs `HCLOUD_TOKEN` plus the `E2E_*` variables produced by `hack/e2e-hetzner.sh setup`.
 
-GNU General Public License v3.0, see [LICENSE](LICENSE).
+</llm>
+
+
+## :wrench: Configuration
+
+<llm configuration hint="Environment variables and CLI flags, taken from the flag definitions or the config struct.">
+
+The Helm chart (`deployments/helm/router-api/values.yaml`) exposes:
+
+| Name | Type | Default | Required | Description |
+|------|------|---------|----------|-------------|
+| `image.repository` | string | `ghcr.io/hauke-cloud/router-api` | No | Container image |
+| `image.tag` | string | `""` (chart appVersion) | No | Image tag |
+| `watchNamespace` | string | `""` (all) | No | Confine managers to one namespace |
+| `crds.install` | bool | `true` | No | Install embedded CRDs at start |
+| `logLevel` | string | `info` | No | Log level |
+| `logFormat` | string | `json` | No | `json` or `text` |
+| `managers.<name>.enabled` | bool | `true` | No | Enable a manager |
+| `managers.<name>.replicas` | int | `1` | No | Replica count |
+| `metrics.port` | int | `8080` | No | Metrics listen port |
+
+Standard Kubernetes fields (`serviceAccount`, `rbac`, `podSecurityContext`, `nodeSelector`, `tolerations`, `affinity`, `priorityClassName`, `imagePullSecrets`, `nameOverride`, `fullnameOverride`, `podAnnotations`, `podLabels`) are also present; see `values.yaml` for the full set.
+
+All three binaries share these flags (`internal/manager/manager.go`):
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-metrics-bind-address` | `:8080` | Metrics; `0` disables |
+| `-health-probe-bind-address` | `:8081` | Health probes |
+| `-leader-elect` | `false` | Leader election |
+| `-namespace` | `""` (all) | Watch one namespace |
+| `-install-crds` | `true` | Install embedded CRDs |
+| `-log-level` / `-log-format` | `info` / `json` | Logging |
+| `-version` | — | Print version and exit |
+
+Test and tooling environment variables:
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `HCLOUD_TOKEN` | — | Hetzner Cloud token (e2e, required) |
+| `VYOS_IMAGE` | `ghcr.io/hauke-cloud/vyos:dev` | Image for `make test-vyos` |
+| `KUBEBUILDER_ASSETS` | — | envtest binary path (set by `make test`) |
+| `E2E_NETWORK` | — | e2e Hetzner network (required) |
+| `E2E_SERVER_IMAGE` | `ubuntu-24.04` | e2e server image |
+| `E2E_LOCATION` | `fsn1` | e2e Hetzner location |
+
+Remaining `E2E_*` variables are defined in `test/e2e/e2e_test.go`; `ROUTER_*` variables for manual VyOS runs are in `test/vyos/remote_test.go`.
+
+</llm>
+
+
+## :hammer: Development
+
+<llm development hint="Include go test, go vet and gofmt only where the CI workflows actually run them.">
+
+Before pushing, run the same checks CI runs:
+
+```bash
+make check
+```
+
+This runs the format check, `go vet`, golangci-lint, a generated-file drift check, Helm chart lint, and the full test suite with envtest assets.
+
+If you changed CRD types under `api/`, regenerate the deepcopy functions and embedded CRD YAMLs:
+
+```bash
+make generate
+```
+
+`make generate-check` (part of `make ci-lint`) fails the build if `internal/crd/assets/` or `zz_generated.deepcopy.go` files are stale.
+
+CI also enforces:
+
+- **Conventional-commit PR titles** – the subject must start with `fix`, `feat`, `docs`, `ci`, or `chore` followed by a colon and an uppercase letter.
+- **Pre-commit hooks** – install with `pre-commit install`; they run on every commit.
+- **Helm chart lint** – `make helm-lint` renders the chart with all option combinations and checks RBAC; `make tag-guard` requires exactly one `tag:` line in `values.yaml` so CI can rewrite it.
+
+For individual steps: `make fmt`, `make vet`, `make lint`, `make test`, `make helm-lint`.
+
+</llm>
+
+
+## 📄 License
+
+This Project is licensed under the GNU General Public License v3.0
+
+- see the [LICENSE](LICENSE) file for details.
+
+
+## :coffee: Contributing
+
+To become a contributor, please check out the [CONTRIBUTING](CONTRIBUTING.md) file.
+
+
+## :email: Contact
+
+For any inquiries or support requests, please open an issue in this
+repository or contact us at [contact@hauke.cloud](mailto:contact@hauke.cloud).
