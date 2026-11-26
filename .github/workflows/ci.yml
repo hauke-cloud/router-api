@@ -21,7 +21,7 @@ jobs:
 
     steps:
       - name: Build, Test, and Release
-        uses: hauke-cloud/inpacken-un-af-dor-mit@v1
+        uses: hauke-cloud/inpacken-un-af-dor-mit@v2
         with:
           # Language
           language: "go"
